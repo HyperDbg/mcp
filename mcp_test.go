@@ -15,6 +15,8 @@ func TestDebug(t *testing.T) {
 	d := sdk.Debugger{}
 	assert.True(t, d.VmxSupportDetection())
 	assert.Equal(t, "GenuineIntel", d.CpuReadVendorString())
+	d.InstallVmmDriver()
+	d.LoadVmmModule()
 	println(d.ShowSignature())
 	d.RunCommand("xxoo")
 }
