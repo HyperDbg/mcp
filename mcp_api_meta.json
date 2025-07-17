@@ -10,29 +10,29 @@
   "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgLoadVmmModule",
+  "Name": "LoadVmmModule",
   "Params": null,
-  "ReturnType": "INT"
+  "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgUnloadVmm",
+  "Name": "UnloadVmm",
   "Params": null,
-  "ReturnType": "INT"
+  "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgInstallVmmDriver",
+  "Name": "InstallVmmDriver",
   "Params": null,
-  "ReturnType": "INT"
+  "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgUninstallVmmDriver",
+  "Name": "UninstallVmmDriver",
   "Params": null,
-  "ReturnType": "INT"
+  "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgStopVmmDriver",
+  "Name": "StopVmmDriver",
   "Params": null,
-  "ReturnType": "INT"
+  "ReturnType": "CHAR *"
  },
  {
   "Name": "RunCommand",
@@ -45,7 +45,7 @@
   "ReturnType": "CHAR *"
  },
  {
-  "Name": "HyperDbgTestCommandParser",
+  "Name": "TestCommandParser",
   "Params": [
    {
     "Name": "command",
@@ -71,7 +71,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgTestCommandParserShowTokens",
+  "Name": "TestCommandParserShowTokens",
   "Params": [
    {
     "Name": "command",
@@ -81,7 +81,7 @@
   "ReturnType": "VOID"
  },
  {
-  "Name": "HyperDbgShowSignature",
+  "Name": "ShowSignature",
   "Params": null,
   "ReturnType": "CHAR *"
  },
@@ -189,7 +189,7 @@
   "ReturnType": "VOID"
  },
  {
-  "Name": "HyperDbgReadMemory",
+  "Name": "ReadMemory",
   "Params": [
    {
     "Name": "target_address",
@@ -231,7 +231,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgShowMemoryOrDisassemble",
+  "Name": "ShowMemoryOrDisassemble",
   "Params": [
    {
     "Name": "style",
@@ -265,7 +265,7 @@
   "ReturnType": "VOID"
  },
  {
-  "Name": "HyperDbgReadAllRegisters",
+  "Name": "ReadAllRegisters",
   "Params": [
    {
     "Name": "guest_registers",
@@ -279,7 +279,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgReadTargetRegister",
+  "Name": "ReadTargetRegister",
   "Params": [
    {
     "Name": "register_id",
@@ -293,7 +293,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgWriteTargetRegister",
+  "Name": "WriteTargetRegister",
   "Params": [
    {
     "Name": "register_id",
@@ -307,12 +307,12 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgRegisterShowAll",
+  "Name": "RegisterShowAll",
   "Params": null,
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgRegisterShowTargetRegister",
+  "Name": "RegisterShowTargetRegister",
   "Params": [
    {
     "Name": "register_id",
@@ -322,7 +322,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgWriteMemory",
+  "Name": "WriteMemory",
   "Params": [
    {
     "Name": "destination_address",
@@ -353,7 +353,7 @@
   "ReturnType": "UINT64"
  },
  {
-  "Name": "HyperDbgDebugRemoteDeviceUsingComPort",
+  "Name": "DebugRemoteDeviceUsingComPort",
   "Params": [
    {
     "Name": "port_name",
@@ -371,7 +371,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgDebugRemoteDeviceUsingNamedPipe",
+  "Name": "DebugRemoteDeviceUsingNamedPipe",
   "Params": [
    {
     "Name": "named_pipe",
@@ -385,12 +385,12 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgDebugCloseRemoteDebugger",
+  "Name": "DebugCloseRemoteDebugger",
   "Params": null,
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgDebugCurrentDeviceUsingComPort",
+  "Name": "DebugCurrentDeviceUsingComPort",
   "Params": [
    {
     "Name": "port_name",
@@ -428,7 +428,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgAssembleGetLength",
+  "Name": "AssembleGetLength",
   "Params": [
    {
     "Name": "assembly_code",
@@ -446,7 +446,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgAssemble",
+  "Name": "Assemble",
   "Params": [
    {
     "Name": "assembly_code",
@@ -520,7 +520,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgGetLocalApic",
+  "Name": "GetLocalApic",
   "Params": [
    {
     "Name": "local_apic",
@@ -534,7 +534,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgGetIoApic",
+  "Name": "GetIoApic",
   "Params": [
    {
     "Name": "io_apic",
@@ -544,7 +544,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgGetIdtEntry",
+  "Name": "GetIdtEntry",
   "Params": [
    {
     "Name": "idt_packet",
@@ -586,7 +586,7 @@
   "ReturnType": "VOID"
  },
  {
-  "Name": "HyperDbgEnableTransparentMode",
+  "Name": "EnableTransparentMode",
   "Params": [
    {
     "Name": "ProcessId",
@@ -604,7 +604,7 @@
   "ReturnType": "BOOLEAN"
  },
  {
-  "Name": "HyperDbgDisableTransparentMode",
+  "Name": "DisableTransparentMode",
   "Params": null,
   "ReturnType": "BOOLEAN"
  }

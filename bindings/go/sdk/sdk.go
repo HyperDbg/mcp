@@ -15,20 +15,20 @@ func (Debugger) VmxSupportDetection() bool {
 func (Debugger) CpuReadVendorString() string {
 	return request[string]("CpuReadVendorString", nil)
 }
-func (Debugger) LoadVmmModule() int {
-	return request[int]("LoadVmmModule", nil)
+func (Debugger) LoadVmmModule() string {
+	return request[string]("LoadVmmModule", nil)
 }
-func (Debugger) UnloadVmm() int {
-	return request[int]("UnloadVmm", nil)
+func (Debugger) UnloadVmm() string {
+	return request[string]("UnloadVmm", nil)
 }
-func (Debugger) InstallVmmDriver() int {
-	return request[int]("InstallVmmDriver", nil)
+func (Debugger) InstallVmmDriver() string {
+	return request[string]("InstallVmmDriver", nil)
 }
-func (Debugger) UninstallVmmDriver() int {
-	return request[int]("UninstallVmmDriver", nil)
+func (Debugger) UninstallVmmDriver() string {
+	return request[string]("UninstallVmmDriver", nil)
 }
-func (Debugger) StopVmmDriver() int {
-	return request[int]("StopVmmDriver", nil)
+func (Debugger) StopVmmDriver() string {
+	return request[string]("StopVmmDriver", nil)
 }
 func (Debugger) RunCommand(command string) string {
 	return request[string]("RunCommand", map[string]string{"command": command})

@@ -7,7 +7,7 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_HyperDBG_SERVER = "http://127.0.0.1:8888/"
 hyperdbg_server_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HyperDBG_SERVER
 
-mcp = FastMCP("hyperdbg-mcp")
+mcp = FastMCP("-mcp")
 
 def safe_get(endpoint: str, params: dict = None):
     """
@@ -64,31 +64,31 @@ def VmxSupportDetection()
 def CpuReadVendorString()
 
 @mcp.tool()
-def HyperDbgLoadVmmModule()
+def LoadVmmModule()
 
 @mcp.tool()
-def HyperDbgUnloadVmm()
+def UnloadVmm()
 
 @mcp.tool()
-def HyperDbgInstallVmmDriver()
+def InstallVmmDriver()
 
 @mcp.tool()
-def HyperDbgUninstallVmmDriver()
+def UninstallVmmDriver()
 
 @mcp.tool()
-def HyperDbgStopVmmDriver()
+def StopVmmDriver()
 
 @mcp.tool()
 def RunCommand()
 
 @mcp.tool()
-def HyperDbgTestCommandParser()
+def TestCommandParser()
 
 @mcp.tool()
-def HyperDbgTestCommandParserShowTokens()
+def TestCommandParserShowTokens()
 
 @mcp.tool()
-def HyperDbgShowSignature()
+def ShowSignature()
 
 @mcp.tool()
 def ScriptReadFileAndExecuteCommandline()
@@ -121,43 +121,43 @@ def SetCustomDriverPath()
 def UseDefaultDriverPath()
 
 @mcp.tool()
-def HyperDbgReadMemory()
+def ReadMemory()
 
 @mcp.tool()
-def HyperDbgShowMemoryOrDisassemble()
+def ShowMemoryOrDisassemble()
 
 @mcp.tool()
-def HyperDbgReadAllRegisters()
+def ReadAllRegisters()
 
 @mcp.tool()
-def HyperDbgReadTargetRegister()
+def ReadTargetRegister()
 
 @mcp.tool()
-def HyperDbgWriteTargetRegister()
+def WriteTargetRegister()
 
 @mcp.tool()
-def HyperDbgRegisterShowAll()
+def RegisterShowAll()
 
 @mcp.tool()
-def HyperDbgRegisterShowTargetRegister()
+def RegisterShowTargetRegister()
 
 @mcp.tool()
-def HyperDbgWriteMemory()
+def WriteMemory()
 
 @mcp.tool()
 def DebuggerGetKernelBase()
 
 @mcp.tool()
-def HyperDbgDebugRemoteDeviceUsingComPort()
+def DebugRemoteDeviceUsingComPort()
 
 @mcp.tool()
-def HyperDbgDebugRemoteDeviceUsingNamedPipe()
+def DebugRemoteDeviceUsingNamedPipe()
 
 @mcp.tool()
-def HyperDbgDebugCloseRemoteDebugger()
+def DebugCloseRemoteDebugger()
 
 @mcp.tool()
-def HyperDbgDebugCurrentDeviceUsingComPort()
+def DebugCurrentDeviceUsingComPort()
 
 @mcp.tool()
 def StartProcess()
@@ -166,10 +166,10 @@ def StartProcess()
 def StartProcessWithArgs()
 
 @mcp.tool()
-def HyperDbgAssembleGetLength()
+def AssembleGetLength()
 
 @mcp.tool()
-def HyperDbgAssemble()
+def Assemble()
 
 @mcp.tool()
 def SetupPathForFileName()
@@ -190,13 +190,13 @@ def SteppingInstrumentationStepInForTracking()
 def SteppingStepOverForGu()
 
 @mcp.tool()
-def HyperDbgGetLocalApic()
+def GetLocalApic()
 
 @mcp.tool()
-def HyperDbgGetIoApic()
+def GetIoApic()
 
 @mcp.tool()
-def HyperDbgGetIdtEntry()
+def GetIdtEntry()
 
 @mcp.tool()
 def HwdbgScriptRunScript()
@@ -205,10 +205,10 @@ def HwdbgScriptRunScript()
 def ScriptEngineWrapperTestParserForHwdbg()
 
 @mcp.tool()
-def HyperDbgEnableTransparentMode()
+def EnableTransparentMode()
 
 @mcp.tool()
-def HyperDbgDisableTransparentMode()
+def DisableTransparentMode()
 
 if __name__ == "__main__":
     mcp.run()

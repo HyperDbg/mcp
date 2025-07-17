@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/ddkwork/golibrary/std/stream"
@@ -62,7 +61,6 @@ func Test_Bind_Go(t *testing.T) {
 	g := stream.NewGeneratedFile()
 	g.P("type Debugger struct {}")
 	for _, api := range apis {
-		api.Name = strings.TrimPrefix(api.Name, "HyperDbg")
 		params := ""
 		for i, param := range api.Params {
 			params += param.Name + " " + goType[param.Type]
@@ -188,9 +186,15 @@ func Test_Gen_Cpp_Server_Code(t *testing.T) {
 	//                    CpuReadVendorString(vendorString);
 	//                    sendHttpResponse(clientSocket, 200, "text/plain", vendorString);
 	//                }
+	g := stream.NewGeneratedFile()
 	for _, api := range apis {
-		println(api.Name)
+		g.P("else if (path == " +
+			strconv.Quote(api.Name) +
+			") {")
+		//g.P("//todo handle params`")
+		g.P("}")
 	}
+	stream.WriteTruncate("echo.h", g.String())
 
 }
 func Test_Bind_V(t *testing.T) {}
@@ -205,7 +209,7 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_HyperDBG_SERVER = "http://127.0.0.1:8888/"
 hyperdbg_server_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HyperDBG_SERVER
 
-mcp = FastMCP("hyperdbg-mcp")
+mcp = FastMCP("-mcp")
 
 def safe_get(endpoint: str, params: dict = None):
     """
@@ -304,30 +308,30 @@ var apis = []ApiMeta{
 		ReturnType: "CHAR *",
 	},
 	{
-		Name:       "HyperDbgLoadVmmModule",
+		Name:       "LoadVmmModule",
 		Params:     nil,
-		ReturnType: "INT", //? INT Returns 0 if it was successful and 1 if it was failed
+		ReturnType: "CHAR *",
 	},
 	{
-		Name:       "HyperDbgUnloadVmm",
+		Name:       "UnloadVmm",
 		Params:     nil,
-		ReturnType: "INT",
+		ReturnType: "CHAR *",
 	},
 	{
-		Name:       "HyperDbgInstallVmmDriver",
+		Name:       "InstallVmmDriver",
 		Params:     nil,
-		ReturnType: "INT",
+		ReturnType: "CHAR *",
 	},
 
 	{
-		Name:       "HyperDbgUninstallVmmDriver",
+		Name:       "UninstallVmmDriver",
 		Params:     nil,
-		ReturnType: "INT",
+		ReturnType: "CHAR *",
 	},
 	{
-		Name:       "HyperDbgStopVmmDriver",
+		Name:       "StopVmmDriver",
 		Params:     nil,
-		ReturnType: "INT",
+		ReturnType: "CHAR *",
 	},
 	{
 		Name: "RunCommand",
@@ -341,7 +345,7 @@ var apis = []ApiMeta{
 	},
 
 	{
-		Name: "HyperDbgTestCommandParser",
+		Name: "TestCommandParser",
 		Params: []NameType{
 			{
 				Name: "command",
@@ -367,7 +371,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgTestCommandParserShowTokens",
+		Name: "TestCommandParserShowTokens",
 		Params: []NameType{
 			{
 				Name: "command",
@@ -378,7 +382,7 @@ var apis = []ApiMeta{
 	},
 
 	{
-		Name:       "HyperDbgShowSignature",
+		Name:       "ShowSignature",
 		Params:     nil,
 		ReturnType: "CHAR *",
 	},
@@ -488,7 +492,7 @@ var apis = []ApiMeta{
 		ReturnType: "VOID",
 	},
 	{
-		Name: "HyperDbgReadMemory", //todo 处理参数是指针类型的格式化操作，参数太多了
+		Name: "ReadMemory", //todo 处理参数是指针类型的格式化操作，参数太多了
 		Params: []NameType{
 			{
 				Name: "target_address",
@@ -530,7 +534,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN", //todo 改变返回值类型 bytes buffer return need to be changed
 	},
 	{
-		Name: "HyperDbgShowMemoryOrDisassemble",
+		Name: "ShowMemoryOrDisassemble",
 		Params: []NameType{
 			{
 				Name: "style",
@@ -564,7 +568,7 @@ var apis = []ApiMeta{
 		ReturnType: "VOID", //TODO
 	},
 	{
-		Name: "HyperDbgReadAllRegisters",
+		Name: "ReadAllRegisters",
 		Params: []NameType{
 			{
 				Name: "guest_registers",
@@ -592,7 +596,7 @@ var apis = []ApiMeta{
 	//	ReturnType: "xxxxxxxxxxxxxxxxx",
 	//},
 	{
-		Name: "HyperDbgReadTargetRegister",
+		Name: "ReadTargetRegister",
 		Params: []NameType{
 			{
 				Name: "register_id",
@@ -606,7 +610,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN", //todo 返回结构体
 	},
 	{
-		Name: "HyperDbgWriteTargetRegister",
+		Name: "WriteTargetRegister",
 		Params: []NameType{
 			{
 				Name: "register_id",
@@ -620,12 +624,12 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name:       "HyperDbgRegisterShowAll", //?
+		Name:       "RegisterShowAll", //?
 		Params:     nil,
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgRegisterShowTargetRegister",
+		Name: "RegisterShowTargetRegister",
 		Params: []NameType{
 			{
 				Name: "register_id",
@@ -635,7 +639,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgWriteMemory",
+		Name: "WriteMemory",
 		Params: []NameType{
 			{
 				Name: "destination_address",
@@ -666,7 +670,7 @@ var apis = []ApiMeta{
 		ReturnType: "UINT64",
 	},
 	{
-		Name: "HyperDbgDebugRemoteDeviceUsingComPort",
+		Name: "DebugRemoteDeviceUsingComPort",
 		Params: []NameType{
 			{
 				Name: "port_name",
@@ -684,7 +688,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgDebugRemoteDeviceUsingNamedPipe",
+		Name: "DebugRemoteDeviceUsingNamedPipe",
 		Params: []NameType{
 			{
 				Name: "named_pipe",
@@ -698,12 +702,12 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name:       "HyperDbgDebugCloseRemoteDebugger",
+		Name:       "DebugCloseRemoteDebugger",
 		Params:     nil,
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgDebugCurrentDeviceUsingComPort",
+		Name: "DebugCurrentDeviceUsingComPort",
 		Params: []NameType{
 			{
 				Name: "port_name",
@@ -741,7 +745,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgAssembleGetLength",
+		Name: "AssembleGetLength",
 		Params: []NameType{
 			{
 				Name: "assembly_code",
@@ -759,7 +763,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgAssemble",
+		Name: "Assemble",
 		Params: []NameType{
 			{
 				Name: "assembly_code",
@@ -833,7 +837,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgGetLocalApic",
+		Name: "GetLocalApic",
 		Params: []NameType{
 			{
 				Name: "local_apic",
@@ -847,7 +851,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgGetIoApic",
+		Name: "GetIoApic",
 		Params: []NameType{
 			{
 				Name: "io_apic",
@@ -857,7 +861,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name: "HyperDbgGetIdtEntry",
+		Name: "GetIdtEntry",
 		Params: []NameType{
 			{
 				Name: "idt_packet",
@@ -899,7 +903,7 @@ var apis = []ApiMeta{
 		ReturnType: "VOID",
 	},
 	{
-		Name: "HyperDbgEnableTransparentMode",
+		Name: "EnableTransparentMode",
 		Params: []NameType{
 			{
 				Name: "ProcessId",
@@ -917,7 +921,7 @@ var apis = []ApiMeta{
 		ReturnType: "BOOLEAN",
 	},
 	{
-		Name:       "HyperDbgDisableTransparentMode",
+		Name:       "DisableTransparentMode",
 		Params:     nil,
 		ReturnType: "BOOLEAN",
 	},
