@@ -70,7 +70,7 @@ func request[T Type](endpoint string, params map[string]string) T {
 	body := mylog.Check2(io.ReadAll(resp.Body))
 
 	if resp.StatusCode != http.StatusOK {
-		mylog.Check(fmt.Sprintf("Error %d: %s", resp.StatusCode, string(body)))
+		mylog.Check(fmt.Sprintf("Error %d: %s", resp.StatusCode, string(body)+" ---> "+url))
 	}
 
 	str := strings.TrimSpace(string(body))
