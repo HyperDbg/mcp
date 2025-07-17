@@ -192,14 +192,7 @@ func request[T Type](endpoint string, params map[string]string) T {
 	panic("not support type")
 }
 
-type (
-	DEBUGGER_READ_MEMORY_ADDRESS_MODE byte
-	DEBUGGER_READ_MEMORY_TYPE         byte
-	DEBUGGER_EDIT_MEMORY_TYPE         byte
-	DEBUGGER_READ_READING_TYPE        byte
-	REGS_ENUM                         byte
-	DEBUGGER_SHOW_MEMORY_STYLE        byte
-)
+type DEBUGGER_SHOW_MEMORY_STYLE byte
 
 const (
 	DEBUGGER_SHOW_COMMAND_DT DEBUGGER_SHOW_MEMORY_STYLE = iota + 1
@@ -212,20 +205,40 @@ const (
 	DEBUGGER_SHOW_COMMAND_DUMP
 )
 
+type DEBUGGER_READ_MEMORY struct {
+	Pid            uint32 // Read from cr3 of what process
+	Address        uint64
+	Size           uint32
+	GetAddressMode bool // Debugger sets whether the read memory is for diassembler or not
+	//AddressMode    DEBUGGER_READ_MEMORY_ADDRESS_MODE // Debuggee sets the mode of address
+	MemoryType  DEBUGGER_READ_MEMORY_TYPE
+	ReadingType DEBUGGER_READ_READING_TYPE
+	//ReturnLength   uint32 // not used in local debugging
+	//KernelStatus   uint32 // not used in local debugging
+}
+
+type DEBUGGER_READ_READING_TYPE byte
+
 const (
 	READ_FROM_KERNEL DEBUGGER_READ_READING_TYPE = iota
 	READ_FROM_VMX_ROOT
 )
+
+type DEBUGGER_EDIT_MEMORY_TYPE byte
 
 const (
 	EDIT_VIRTUAL_MEMORY DEBUGGER_EDIT_MEMORY_TYPE = iota
 	EDIT_PHYSICAL_MEMORY
 )
 
+type DEBUGGER_READ_MEMORY_TYPE byte
+
 const (
 	DEBUGGER_READ_PHYSICAL_ADDRESS DEBUGGER_READ_MEMORY_TYPE = iota
 	DEBUGGER_READ_VIRTUAL_ADDRESS
 )
+
+type DEBUGGER_READ_MEMORY_ADDRESS_MODE byte
 
 const (
 	DEBUGGER_READ_ADDRESS_MODE_32_BIT DEBUGGER_READ_MEMORY_ADDRESS_MODE = iota
@@ -356,6 +369,8 @@ type LAPIC_PAGE struct {
 
 // PLAPIC_PAGE 是指向 LAPIC_PAGE 的指针类型
 type PLAPIC_PAGE *LAPIC_PAGE
+
+type REGS_ENUM byte
 
 const (
 	REGISTER_RAX REGS_ENUM = iota

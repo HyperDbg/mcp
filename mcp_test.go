@@ -21,6 +21,19 @@ func TestDebug(t *testing.T) {
 	d.RunCommand("xxoo")
 }
 
+func TestName(t *testing.T) {
+	readMemory := DEBUGGER_READ_MEMORY{
+		Pid:            66,
+		Address:        0x401000,
+		Size:           98,
+		GetAddressMode: true,
+		MemoryType:     DEBUGGER_READ_PHYSICAL_ADDRESS,
+		ReadingType:    READ_FROM_VMX_ROOT,
+	}
+	json := stream.MarshalJSON(readMemory)
+	println(string(json))
+}
+
 /* todo
  *  make all commands json file
  *  decode all error code text and send to client
