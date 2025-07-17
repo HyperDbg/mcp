@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"github.com/ddkwork/golibrary/std/stream"
 	"strconv"
-	"strings"
 )
 
 type Debugger struct{}
@@ -33,8 +32,8 @@ func (Debugger) StopVmmDriver() string {
 func (Debugger) RunCommand(command string) string {
 	return request[string]("RunCommand", map[string]string{"command": command})
 }
-func (Debugger) TestCommandParserShowTokens(command string) {
-	request[void]("TestCommandParserShowTokens", map[string]string{"command": command})
+func (Debugger) TestCommandParserShowTokens(command string) string {
+	return request[string]("TestCommandParserShowTokens", map[string]string{"command": command})
 }
 func (Debugger) ShowSignature() string {
 	return request[string]("ShowSignature", nil)

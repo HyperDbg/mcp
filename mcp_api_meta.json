@@ -52,7 +52,7 @@
     "Type": "CHAR *"
    }
   ],
-  "ReturnType": "VOID"
+  "ReturnType": "CHAR *"
  },
  {
   "Name": "ShowSignature",

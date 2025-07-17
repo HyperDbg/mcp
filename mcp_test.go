@@ -154,7 +154,7 @@ func Test_Bind_Go(t *testing.T) {
 		g.P("\t", returnSyntax, " request[", goType[api.ReturnType], "](", strconv.Quote(api.Name), ",", paramsMap, ")")
 		g.P("}")
 	}
-	g.AddImport("strings")
+	//g.AddImport("strings")
 	g.AddImport("encoding/hex")
 	//g.AddImport("encoding/json")
 	g.AddImport("github.com/ddkwork/golibrary/std/stream")
@@ -353,7 +353,7 @@ var apis = []ApiMeta{
 				Type: "CHAR *",
 			},
 		},
-		ReturnType: "VOID",
+		ReturnType: "CHAR *",
 	},
 
 	{
