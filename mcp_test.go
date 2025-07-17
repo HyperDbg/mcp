@@ -211,7 +211,7 @@ from mcp.server.fastmcp import FastMCP
 DEFAULT_HyperDBG_SERVER = "http://127.0.0.1:8888/"
 hyperdbg_server_url = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_HyperDBG_SERVER
 
-mcp = FastMCP("-mcp")
+mcp = FastMCP("hyperdbg-mcp")
 
 def safe_get(endpoint: str, params: dict = None):
     """
