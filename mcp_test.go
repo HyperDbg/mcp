@@ -1,8 +1,8 @@
 package mcp
 
 import (
-	"github.com/HyperDbg/mcp/bindings/go/sdk"
 	"github.com/ddkwork/golibrary/std/assert"
+	"github.com/ddkwork/mcp/bindings/go/sdk"
 	"os"
 	"path/filepath"
 	"strconv"

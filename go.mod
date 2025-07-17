@@ -1,4 +1,4 @@
-module github.com/HyperDbg/mcp
+module github.com/ddkwork/mcp
 
 go 1.25rc1
 
