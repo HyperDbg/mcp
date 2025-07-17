@@ -38,12 +38,6 @@ func (Debugger) TestCommandParserShowTokens(command string) string {
 func (Debugger) ShowSignature() string {
 	return request[string]("ShowSignature", nil)
 }
-func (Debugger) ScriptReadFileAndExecuteCommandline(argc int, argv string) int {
-	return request[int]("ScriptReadFileAndExecuteCommandline", map[string]string{
-		"argc": strconv.Itoa(argc),
-		"argv": argv,
-	})
-}
 func (Debugger) ContinuePreviousCommand() bool {
 	return request[bool]("ContinuePreviousCommand", nil)
 }
@@ -56,8 +50,8 @@ func (Debugger) CheckMultilineCommand(current_command string, reset bool) bool {
 func (Debugger) ConnectLocalDebugger() {
 	request[void]("ConnectLocalDebugger", nil)
 }
-func (Debugger) ConnectRemoteDebugger(ip string, port string) bool {
-	return request[bool]("ConnectRemoteDebugger", map[string]string{
+func (Debugger) ConnectRemoteDebugger(ip string, port string) string {
+	return request[string]("ConnectRemoteDebugger", map[string]string{
 		"ip":   ip,
 		"port": port,
 	})

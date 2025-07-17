@@ -361,20 +361,6 @@ var apis = []ApiMeta{
 		Params:     nil,
 		ReturnType: "CHAR *",
 	},
-	{
-		Name: "ScriptReadFileAndExecuteCommandline",
-		Params: []NameType{
-			{
-				Name: "argc",
-				Type: "INT",
-			},
-			{
-				Name: "argv",
-				Type: "CHAR *",
-			},
-		},
-		ReturnType: "INT",
-	},
 
 	{
 		Name:       "ContinuePreviousCommand",
@@ -414,7 +400,7 @@ var apis = []ApiMeta{
 				Type: "const CHAR *",
 			},
 		},
-		ReturnType: "BOOLEAN",
+		ReturnType: "CHAR *",
 	},
 	{
 		Name:       "Continue", //c api CommandGRequest

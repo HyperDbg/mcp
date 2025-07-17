@@ -60,20 +60,6 @@
   "ReturnType": "CHAR *"
  },
  {
-  "Name": "ScriptReadFileAndExecuteCommandline",
-  "Params": [
-   {
-    "Name": "argc",
-    "Type": "INT"
-   },
-   {
-    "Name": "argv",
-    "Type": "CHAR *"
-   }
-  ],
-  "ReturnType": "INT"
- },
- {
   "Name": "ContinuePreviousCommand",
   "Params": null,
   "ReturnType": "BOOLEAN"
@@ -109,7 +95,7 @@
     "Type": "const CHAR *"
    }
   ],
-  "ReturnType": "BOOLEAN"
+  "ReturnType": "CHAR *"
  },
  {
   "Name": "Continue",

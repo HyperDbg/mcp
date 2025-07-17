@@ -88,9 +88,6 @@ def TestCommandParserShowTokens()
 def ShowSignature()
 
 @mcp.tool()
-def ScriptReadFileAndExecuteCommandline()
-
-@mcp.tool()
 def ContinuePreviousCommand()
 
 @mcp.tool()
