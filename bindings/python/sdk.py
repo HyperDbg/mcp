@@ -82,9 +82,6 @@ def StopVmmDriver()
 def RunCommand()
 
 @mcp.tool()
-def TestCommandParser()
-
-@mcp.tool()
 def TestCommandParserShowTokens()
 
 @mcp.tool()

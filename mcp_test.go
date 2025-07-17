@@ -345,33 +345,6 @@ var apis = []ApiMeta{
 		},
 		ReturnType: "CHAR *",
 	},
-
-	{
-		Name: "TestCommandParser",
-		Params: []NameType{
-			{
-				Name: "command",
-				Type: "CHAR *",
-			},
-			{
-				Name: "number_of_tokens",
-				Type: "UINT32",
-			},
-			{
-				Name: "tokens_list",
-				Type: "CHAR **", //?todo how to format this
-			},
-			{
-				Name: "failed_token_num",
-				Type: "UINT32 *",
-			},
-			{
-				Name: "failed_token_position",
-				Type: "UINT32 *",
-			},
-		},
-		ReturnType: "BOOLEAN",
-	},
 	{
 		Name: "TestCommandParserShowTokens",
 		Params: []NameType{

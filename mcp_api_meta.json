@@ -45,32 +45,6 @@
   "ReturnType": "CHAR *"
  },
  {
-  "Name": "TestCommandParser",
-  "Params": [
-   {
-    "Name": "command",
-    "Type": "CHAR *"
-   },
-   {
-    "Name": "number_of_tokens",
-    "Type": "UINT32"
-   },
-   {
-    "Name": "tokens_list",
-    "Type": "CHAR **"
-   },
-   {
-    "Name": "failed_token_num",
-    "Type": "UINT32 *"
-   },
-   {
-    "Name": "failed_token_position",
-    "Type": "UINT32 *"
-   }
-  ],
-  "ReturnType": "BOOLEAN"
- },
- {
   "Name": "TestCommandParserShowTokens",
   "Params": [
    {

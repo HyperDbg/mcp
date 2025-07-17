@@ -33,15 +33,6 @@ func (Debugger) StopVmmDriver() string {
 func (Debugger) RunCommand(command string) string {
 	return request[string]("RunCommand", map[string]string{"command": command})
 }
-func (Debugger) TestCommandParser(command string, number_of_tokens uint32, tokens_list []string, failed_token_num uint32, failed_token_position uint32) bool {
-	return request[bool]("TestCommandParser", map[string]string{
-		"command":               command,
-		"number_of_tokens":      strconv.FormatUint(uint64(number_of_tokens), 10),
-		"tokens_list":           strings.Join(tokens_list, " "),
-		"failed_token_num":      strconv.FormatUint(uint64(failed_token_num), 10),
-		"failed_token_position": strconv.FormatUint(uint64(failed_token_position), 10),
-	})
-}
 func (Debugger) TestCommandParserShowTokens(command string) {
 	request[void]("TestCommandParserShowTokens", map[string]string{"command": command})
 }
