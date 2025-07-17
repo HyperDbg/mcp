@@ -1,0 +1,5 @@
+/go.work
+/go.work.sum
+log.log
+.idea
+update go workspace.cmd
