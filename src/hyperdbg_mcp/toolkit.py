@@ -170,7 +170,12 @@ async def require_confirmation(ctx: Context, what: str) -> bool | InputRequiredR
     the first round returns an InputRequiredResult (return it from the tool);
     the client retries the call with the answer in `input_responses`. Older
     revisions keep the synchronous `elicitation/create` round-trip.
+
+    `--assume-consent` short-circuits this: clients that advertise no
+    elicitation (and so would deny every mutating tool) run pre-approved.
     """
+    if app_ctx(ctx).assume_consent:
+        return True
     message = f"HyperDbg is a ring-0 debugger. Confirm: {what}"
     version = ctx.protocol_version
     if version is None or not is_version_at_least(version, "2026-07-28"):

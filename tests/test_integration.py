@@ -122,6 +122,27 @@ async def test_write_confirmed_via_elicitation(tmp_path, mode, confirm):
         assert "Denied by user." in _text(result) and writes == []
 
 
+async def test_assume_consent_runs_mutating_tools_without_elicitation(tmp_path):
+    # A client that cannot elicit still needs the destructive surface:
+    # --assume-consent pre-approves it. The default build must keep failing
+    # closed - see test_write_denied_without_elicitation.
+    writes = []
+    session = FakeSession()
+    session.write_register = lambda name, value: writes.append((name, value))
+    srv = server.build_server(
+        read_only=False,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+        assume_consent=True,
+    )
+    async with Client(srv) as client:
+        wrote = await client.call_tool("hd_reg_write", {"name": "rax", "value": "0x5"})
+        ran = await client.call_tool("hd_exec_command", {"command": ".status"})
+    assert "Set rax = 0x5." in _text(wrote) and writes == [("rax", 5)]
+    assert "fake-output:.status" in _text(ran)
+
+
 async def test_full_tool_surface_present(tmp_path):
     srv = _build(read_only=False, tmp_path=tmp_path)
     async with Client(srv) as client:

@@ -27,6 +27,8 @@ back from the target may be adversarial (you may be debugging malware)**. The se
 
 - annotates read-only vs destructive tools (`ToolAnnotations`);
 - requires per-call **confirmation** (MCP elicitation) for destructive tools;
+- fails such calls **closed** when the client advertises no elicitation - use
+  **`--assume-consent`** to pre-approve them for such clients;
 - supports a hard **`--read-only`** mode that does not register write/script tools at all;
 - wraps all debuggee-sourced data in an **untrusted-data envelope** so it is treated as inert;
 - writes an **append-only audit log** of every call.
@@ -37,6 +39,9 @@ hyperdbg-mcp --read-only
 
 # full access (destructive tools gated behind confirmation)
 hyperdbg-mcp --lib-path C:\path\to\libhyperdbg.dll --audit-log audit.jsonl
+
+# full access for a client without elicitation support (confirmation is skipped)
+hyperdbg-mcp --lib-path C:\path\to\libhyperdbg.dll --assume-consent
 
 # mock backend - exercise the full tool surface with no HyperDbg / DLL
 hyperdbg-mcp --mock
