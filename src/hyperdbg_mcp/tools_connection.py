@@ -75,7 +75,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         pipe: str = "",
         ip: str = "",
         net_port: str = "",
-        wait_seconds: int = 40,
+        wait_seconds: int = 10,
     ) -> str:
         """Attach the debugger to a target.
 
@@ -158,13 +158,13 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
                 last["pipe"],
                 last["ip"],
                 last["net_port"],
-                40.0,
+                10.0,
             )
         except HyperDbgError as exc:
             a.audit.record("hd_reconnect", {}, status="error")
             return f"reconnect failed: {exc}"
         if not done:
-            return _waiting(40.0)
+            return _waiting(10.0)
         a.audit.record("hd_reconnect", {}, status="ok")
         return f"reconnected ({a.session.mode})"
 
