@@ -94,7 +94,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             what="load the HyperDbg VMM (hypervisor)",
             audit="hd_vmm_load",
             fn=app_ctx(ctx).session.load_vmm,
-            ok=lambda rc: f"load_vmm rc={rc}",
+            ok="VMM loaded (kd driver installed).",
         )
 
     @mcp.tool(name="hd_vmm_unload", annotations=DESTRUCTIVE)
@@ -105,7 +105,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             what="unload the HyperDbg VMM",
             audit="hd_vmm_unload",
             fn=app_ctx(ctx).session.unload_vmm,
-            ok=lambda rc: f"unload_vmm rc={rc}",
+            ok="VMM and kd module unloaded.",
         )
 
     @mcp.tool(name="hd_modules_load_all", annotations=DESTRUCTIVE)
@@ -116,7 +116,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             what="load all HyperDbg modules",
             audit="hd_modules_load_all",
             fn=app_ctx(ctx).session.load_all_modules,
-            ok=lambda rc: f"load_all_modules rc={rc}",
+            ok="All modules loaded (kd driver installed).",
         )
 
     @mcp.tool(name="hd_modules_unload_all", annotations=DESTRUCTIVE)
@@ -127,7 +127,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             what="unload all HyperDbg modules",
             audit="hd_modules_unload_all",
             fn=app_ctx(ctx).session.unload_all_modules,
-            ok=lambda rc: f"unload_all_modules rc={rc}",
+            ok="All modules unloaded.",
         )
 
     @mcp.tool(name="hd_transparent_enable", annotations=DESTRUCTIVE)

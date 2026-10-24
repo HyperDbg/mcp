@@ -139,4 +139,5 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_connection_status(ctx: Context) -> str:
         """Report whether the debugger is attached and in which mode."""
         s = app_ctx(ctx).session
-        return f"connected={s.is_connected}, mode={s.mode}"
+        running = getattr(s, "is_running", False)
+        return f"connected={s.is_connected}, mode={s.mode}, running={running}"

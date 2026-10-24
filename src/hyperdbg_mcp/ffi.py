@@ -355,9 +355,13 @@ def _configure(dll: CDLL) -> None:
     dll.hyperdbg_u_is_any_module_loaded.restype = c_ubyte
     dll.hyperdbg_u_is_any_module_loaded.argtypes = []
 
+    dll.hyperdbg_u_install_kd_driver.restype = c_int  # 0 = ok, 1 = failed
+    dll.hyperdbg_u_install_kd_driver.argtypes = []
     dll.hyperdbg_u_load_vmm.restype = c_int
     dll.hyperdbg_u_load_vmm.argtypes = []
 
+    dll.hyperdbg_u_unload_kd.restype = c_int
+    dll.hyperdbg_u_unload_kd.argtypes = []
     dll.hyperdbg_u_unload_vmm.restype = c_int
     dll.hyperdbg_u_unload_vmm.argtypes = []
 
@@ -427,4 +431,26 @@ def load_libhyperdbg(path: str | None = None) -> CDLL:
             "and Python bitness matches the DLL (x64)."
         ) from exc
     _configure(dll)
+    _use_driver_next_to_dll(dll)
     return dll
+
+
+def _use_driver_next_to_dll(dll: CDLL) -> None:
+    """Point libhyperdbg at the hyperkd.sys shipped beside the DLL.
+
+    libhyperdbg looks for its driver next to the process EXE (GetModuleHandle
+    (NULL)): fine for hyperdbg-cli.exe, but under Python that is python.exe's
+    folder, so `load vmm` fails with "target file is not loaded".
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(32768)
+    if not ctypes.windll.kernel32.GetModuleFileNameW(ctypes.c_void_p(dll._handle), buf, len(buf)):
+        return
+    driver = os.path.join(os.path.dirname(buf.value), "hyperkd.sys")
+    if os.path.isfile(driver):
+        dll.hyperdbg_u_set_custom_driver_path.restype = c_ubyte
+        dll.hyperdbg_u_set_custom_driver_path.argtypes = [c_char_p, c_char_p]
+        dll.hyperdbg_u_set_custom_driver_path(driver.encode("mbcs"), b"hyperkd")

@@ -132,15 +132,21 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     # ===== execution-control (no memory writes; allowed in read-only) ===== #
     @mcp.tool(name="hd_exec_continue", annotations=_STATE)
     def hd_exec_continue(ctx: Context) -> str:
-        """Continue (resume) the debuggee."""
+        """Resume the debuggee; returns at once while it keeps running.
+
+        Until it halts again (breakpoint, event, or hd_exec_pause) target tools
+        refuse with "debuggee is running"; hd_connection_status shows running=.
+        """
         app = _app(ctx)
-        app.session.continue_debuggee()
+        running = app.session.continue_debuggee()
         app.audit.record("hd_exec_continue", {}, status="ok")
+        if running:
+            return "Continued; the debuggee is running (halts on a breakpoint/event or pause)."
         return "Continued."
 
     @mcp.tool(name="hd_exec_pause", annotations=_STATE)
     def hd_exec_pause(ctx: Context) -> str:
-        """Pause (halt) the debuggee."""
+        """Halt a running debuggee and wait until it is halted (up to 10 s)."""
         app = _app(ctx)
         app.session.pause_debuggee()
         app.audit.record("hd_exec_pause", {}, status="ok")

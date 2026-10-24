@@ -130,17 +130,17 @@ class MockSession:
     def is_any_module_loaded(self) -> bool:
         return True
 
-    def load_vmm(self) -> int:
-        return 1
+    def load_vmm(self) -> None:
+        return None
 
-    def unload_vmm(self) -> int:
-        return 1
+    def unload_vmm(self) -> None:
+        return None
 
-    def load_all_modules(self) -> int:
-        return 1
+    def load_all_modules(self) -> None:
+        return None
 
-    def unload_all_modules(self) -> int:
-        return 1
+    def unload_all_modules(self) -> None:
+        return None
 
     def get_processor_vendor(self) -> str:
         return "Intel"
