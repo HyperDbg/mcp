@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import parse_addr, require_confirmation
+from .toolkit import choose, parse_addr, require_confirmation
 
 if TYPE_CHECKING:  # pragma: no cover
     from mcp.server.mcpserver import MCPServer
@@ -100,12 +100,16 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
         return hex(value)
 
     @mcp.tool(name="hd_disasm", annotations=_RO)
-    def hd_disasm(address: str, ctx: Context, count: int = 16) -> str:
-        """Disassemble up to `count` instructions at `address` (hex string; read-only)."""
+    def hd_disasm(address: str, ctx: Context, count: int = 16, bits: int = 64) -> str:
+        """Disassemble up to `count` instructions at `address` (hex string; read-only).
+
+        bits=32 decodes x86 (WoW64 / 32-bit) code instead of x64.
+        """
         app = _app(ctx)
         addr = parse_addr(address)
         count = max(1, min(count, _MAX_DISASM))
-        out = app.session.run_command(f"u {hex(addr)} l {count:x}")
+        cmd = choose(str(bits), {"64": "u", "32": "u32"}, "bits")
+        out = app.session.run_command(f"{cmd} {hex(addr)} l {count:x}")
         app.audit.record("hd_disasm", {"address": hex(addr), "count": count}, status="ok")
         return wrap_untrusted(out, "disassembly")
 

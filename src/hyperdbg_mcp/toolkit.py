@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -69,6 +70,68 @@ def parse_addr(value: str | int) -> int:
         raise HyperDbgError(
             f"invalid address/value {value!r} (use hex like 0x... or decimal)"
         ) from exc
+
+
+def choose(value: str, allowed: dict[str, str], name: str) -> str:
+    """Map a user-facing choice to its CLI token; reject unknown values loudly."""
+    try:
+        return allowed[value]
+    except KeyError:
+        raise HyperDbgError(
+            f"invalid {name} {value!r} (use {' | '.join(allowed)})"
+        ) from None
+
+
+_HEX_VALUES = re.compile(r"(?:0x)?[0-9a-fA-F`]+(?: (?:0x)?[0-9a-fA-F`]+)*")
+
+
+def token(value: str, name: str) -> str:
+    """Require exactly one CLI token, so a value can't smuggle in extra options.
+
+    HyperDbg runs one command per call, but options inside it are positional
+    words: `struct T output C:/x.h` would write a file even from a "read" tool.
+    """
+    if not value or any(c.isspace() or c in '"{}' for c in value):
+        raise HyperDbgError(f"invalid {name} {value!r} (one word, no spaces/quotes/braces)")
+    return value
+
+
+def hex_values(value: str, name: str = "value") -> str:
+    """Require space-separated hex values (`90 90 cc`), nothing else."""
+    if not _HEX_VALUES.fullmatch(value.strip()):
+        raise HyperDbgError(f"invalid {name} {value!r} (space-separated hex values)")
+    return value.strip()
+
+
+def bracket_body(text: str, name: str = "script") -> str:
+    """Validate text for a `{ ... }` block exactly as HyperDbg's tokenizer reads it.
+
+    The tokenizer counts nested braces outside quotes, and a `//` or `/*`
+    comment outside quotes swallows the rest of the line (closing brace and
+    every option after it). Anything that could end the block early or leak
+    into the surrounding command is rejected instead of escaped.
+    """
+    depth, in_quotes, prev = 0, False, ""
+    for i, c in enumerate(text):
+        if in_quotes:
+            if c == '"' and prev != "\\":
+                in_quotes = False
+        elif c == '"':
+            in_quotes = True
+        elif c == "\\":
+            raise HyperDbgError(f"{name}: backslash outside a string literal is not allowed")
+        elif c == "/" and text[i + 1 : i + 2] in ("/", "*"):
+            raise HyperDbgError(f"{name}: comments are not allowed (they swallow the '}}')")
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if depth < 0:
+                raise HyperDbgError(f"{name}: unbalanced '}}'")
+        prev = c
+    if in_quotes or depth:
+        raise HyperDbgError(f"{name}: unbalanced braces or unterminated string")
+    return text
 
 
 _CONFIRM_KEY = "confirm"

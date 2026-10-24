@@ -58,6 +58,14 @@ with nothing paused.)
 **Target-mutating (full mode only, confirmation-gated):** `hd_exec_command`, `hd_bp_set`,
 `hd_mem_write`, `hd_reg_write`, `hd_script_run`.
 
+The domain modules (`tools_<domain>.py`) bring it to 92 tools (43 under `--read-only`): memory (incl. `dps/dqs` symbolized
+dumps, `.pagein`), symbols, paging, cores (`~`), process/thread switching and user-mode
+`.attach/.detach/.kill/.restart`, every event type (`!epthook` ... `!mode`, `!trace`,
+`!crwrite`, `!xsetbv`) with `pid/core/stage/sc/script` options, `prealloc/preactivate`,
+APIC/IDT/SMI, and `.pe`. Free-text arguments must be a single token and event scripts
+are checked against HyperDbg's `{}` tokenizer, so a value can't smuggle in extra options;
+confirmations show the exact command that will run.
+
 Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
 (the client retries the call with the answer); older revisions use `elicitation/create`.
 

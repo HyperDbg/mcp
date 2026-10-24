@@ -7,10 +7,27 @@
 
 from __future__ import annotations
 
+import re
+
 from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import InputRequiredResult
 
-from .toolkit import DESTRUCTIVE, RO, parse_addr, run_text, run_text_confirmed
+from .errors import HyperDbgError
+from .toolkit import DESTRUCTIVE, RO, choose, hex_values, parse_addr, run_text, run_text_confirmed
+
+_DISPLAY = {
+    "byte": "db",
+    "word": "dw",
+    "dword": "dd",
+    "qword": "dq",
+    "char": "dc",
+    "ascii": "da",
+    "dword_sym": "dds",
+    "qword_sym": "dqs",
+    "ptr_sym": "dps",
+}
+_SEARCH = {"byte": "sb", "dword": "sd", "qword": "sq"}
+_EDIT = {"byte": "eb", "dword": "ed", "qword": "eq"}
 
 
 def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
@@ -23,9 +40,13 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         physical: bool = False,
     ) -> str:
-        """Display debuggee memory at address (hex string; fmt: byte|char|dword|qword)."""
+        """Display debuggee memory at address (hex string).
+
+        fmt: byte|word|dword|qword|char|ascii, or dword_sym|qword_sym|ptr_sym to
+        resolve each value to a symbol (dds/dqs/dps - the way to read a stack).
+        """
         addr = parse_addr(address)
-        base = {"byte": "db", "char": "dc", "dword": "dd", "qword": "dq"}.get(fmt, "db")
+        base = choose(fmt, _DISPLAY, "fmt")
         if physical:
             base = "!" + base
         # HyperDbg length modifier is `l <hex>` (hardware-confirmed: bare/`L`
@@ -47,10 +68,10 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str:
         """Search memory for `value` from `address` (hex string; fmt: byte|dword|qword)."""
         addr = parse_addr(address)
-        base = {"byte": "sb", "dword": "sd", "qword": "sq"}.get(fmt, "sb")
+        base = choose(fmt, _SEARCH, "fmt")
         if physical:
             base = "!" + base
-        cmd = f"{base} {addr:#x} {value}"
+        cmd = f"{base} {addr:#x} {hex_values(value)}"
         if length:
             cmd += f" l {length:#x}"
         if pid:
@@ -77,15 +98,40 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str | InputRequiredResult:
         """Edit debuggee memory at address (hex string; fmt: byte|dword|qword)."""
         addr = parse_addr(address)
-        base = {"byte": "eb", "dword": "ed", "qword": "eq"}.get(fmt, "eb")
+        base = choose(fmt, _EDIT, "fmt")
         if physical:
             base = "!" + base
-        cmd = f"{base} {addr:#x} {value}" + (f" pid {pid:#x}" if pid else "")
+        cmd = f"{base} {addr:#x} {hex_values(value)}" + (f" pid {pid:#x}" if pid else "")
         return await run_text_confirmed(
             ctx,
             cmd,
-            what=f"edit memory at {addr:#x}",
+            what=f"edit memory at {addr:#x}: {cmd}",
             audit="hd_mem_edit",
             kind="memory",
             args={"address": addr},
+        )
+
+    @mcp.tool(name="hd_pagein", annotations=DESTRUCTIVE)
+    async def hd_pagein(
+        address: str, ctx: Context, length: int = 0, mode: str = ""
+    ) -> str | InputRequiredResult:
+        """Page a paged-out range into RAM by injecting a #PF into the debuggee.
+
+        Use it when a read fails on a valid but non-resident address; continue the
+        debuggee afterwards so the fault is served. mode: any of p (present),
+        w (write), u (user), f (fetch), e.g. "wu"; empty = kernel read.
+        """
+        if not re.fullmatch(r"[pwuf]{0,4}", mode) or len(set(mode)) != len(mode):
+            raise HyperDbgError(f"invalid mode {mode!r} (letters from p, w, u, f, each once)")
+        addr = parse_addr(address)
+        cmd = ".pagein" + (f" {mode}" if mode else "") + f" {addr:#x}"
+        if length:
+            cmd += f" l {length:#x}"
+        return await run_text_confirmed(
+            ctx,
+            cmd,
+            what=f"inject a page fault to page in {addr:#x}: {cmd}",
+            audit="hd_pagein",
+            kind="memory",
+            args={"address": addr, "length": length, "mode": mode},
         )

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from .toolkit import RO, parse_addr, run_text
+from .toolkit import RO, choose, parse_addr, run_text
 
 
 def register_paging(mcp: MCPServer, *, read_only: bool) -> None:
@@ -44,7 +44,7 @@ def register_paging(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_stack(ctx: Context, fmt: str = "calls", base: str = "0", length: int = 0) -> str:
         """Display stack trace (fmt: calls|params32|params64); base is an optional hex string."""
         cmd_map = {"calls": "k", "params32": "kd", "params64": "kq"}
-        cmd = cmd_map.get(fmt, "k")
+        cmd = choose(fmt, cmd_map, "fmt")
         base_addr = parse_addr(base)
         if base_addr:
             cmd += f" base {base_addr:#x}"

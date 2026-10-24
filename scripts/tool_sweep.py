@@ -95,6 +95,8 @@ def _arg_for(pname: str, annotation) -> object:
     ann = annotation if isinstance(annotation, str) else getattr(annotation, "__name__", "")
     # Type wins first (disambiguates same-named params, e.g. int vs str `value`).
     if ann == "int":
+        if name == "cr":
+            return 4  # only CR0/CR4 are valid for !crwrite
         if "address" in name or "addr" in name or "base" in name:
             return 0x1000
         return 1
@@ -113,6 +115,14 @@ def _arg_for(pname: str, annotation) -> object:
         "struct_name": "_EPROCESS",
         "transport": "local",
         "fmt": "byte",
+        # enum-like params are validated server-side, so pass a real choice
+        "attribute": "rw",
+        "state": "off",
+        "mode": "user",
+        "trace_type": "step-in",
+        "kind": "epthook",
+        "target": "all",
+        "action": "disable",
     }
     if name in str_hints:
         return str_hints[name]
