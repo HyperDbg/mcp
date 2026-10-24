@@ -160,6 +160,9 @@ class HyperDbgSession:
         # Remote debuggee resumed: libhyperdbg's continue blocks until the next
         # halt, so it runs on this thread and the session refuses target calls.
         self._run_thread: threading.Thread | None = None
+        # Debugger-Mode connect still waiting for the debuggee's handshake.
+        self._connect_thread: threading.Thread | None = None
+        self._connect_failure: BaseException | None = None
         # Persistent reference - MUST outlive every callback invocation.
         self._text_cb = ffi.TextMessageCallback(self._on_text)
 
@@ -193,38 +196,97 @@ class HyperDbgSession:
         _log.info("connected to local HyperDbg debugger (VMI mode)")
 
     def connect_remote_com(
-        self, port_name: str, baudrate: int = 115200, pause: bool = True
-    ) -> None:
+        self,
+        port_name: str,
+        baudrate: int = 115200,
+        pause: bool = True,
+        wait: float | None = None,
+    ) -> bool:
         """Debugger Mode over a serial/COM port to a remote debuggee.
 
-        pause=True halts the debuggee on connect, giving a valid CPU context
-        for register/memory reads and stepping.
+        pause=True leaves the debuggee halted on connect, giving a valid CPU
+        context for register/memory reads and stepping. See _connect_debugger_mode
+        for `wait` and the return value.
         """
-        self._prepare_remote()
-        self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
-        ok = self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(
-            port_name.encode("utf-8"), int(baudrate), 1 if pause else 0
+        return self._connect_debugger_mode(
+            lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(
+                port_name.encode("utf-8"), int(baudrate), 1
+            ),
+            pause,
+            wait,
+            f"failed to connect over COM port {port_name!r} @ {baudrate}",
         )
-        if not ok:
-            raise self._connect_error(f"failed to connect over COM port {port_name!r} @ {baudrate}")
-        self._mode = "remote"
-        self._connected = True
-        _log.info("connected to remote HyperDbg debuggee over %s", port_name)
 
-    def connect_remote_pipe(self, named_pipe: str, pause: bool = True) -> None:
-        """Debugger Mode over a named pipe to a remote debuggee."""
+    def connect_remote_pipe(
+        self, named_pipe: str, pause: bool = True, wait: float | None = None
+    ) -> bool:
+        """Debugger Mode over a named pipe to a remote debuggee (e.g. a VM serial port)."""
+        return self._connect_debugger_mode(
+            lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(
+                named_pipe.encode("utf-8"), 1
+            ),
+            pause,
+            wait,
+            f"failed to connect over named pipe {named_pipe!r}",
+            lambda: _pipe_hint(named_pipe),
+        )
+
+    @property
+    def is_connecting(self) -> bool:
+        """True while a Debugger-Mode connect waits for the debuggee's handshake."""
+        return self._connect_thread is not None and self._connect_thread.is_alive()
+
+    @property
+    def last_connect_error(self) -> str | None:
+        """Why the last background connect failed, if it did (cleared on the next one)."""
+        return None if self._connect_failure is None else str(self._connect_failure)
+
+    def _connect_debugger_mode(self, dll_connect, pause, wait, failure, hint=lambda: "") -> bool:
+        """Run a serial/pipe connect; True once connected, False if still waiting.
+
+        libhyperdbg blocks until the debuggee's handshake arrives, which takes
+        ~1 min on the first connect and never comes if the debuggee is still bound
+        to an earlier debugger (it sends its handshake once per `.debug prepare`).
+        With `wait` set, the connect runs on a daemon thread and this returns
+        after `wait` seconds at most; a late handshake still completes it.
+
+        Always connects with pause: with pause=0 libhyperdbg's connect does not
+        return while the debuggee runs (it waits for the next halt, like `g`). A
+        no-pause connect is that plus the non-blocking continue_debuggee().
+        """
+        if self.is_connecting:
+            raise PreconditionError(
+                "a connect is already waiting for the debuggee's handshake (hd_connection_status)"
+            )
         self._prepare_remote()
         self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
         self._drain()
-        ok = self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(
-            named_pipe.encode("utf-8"), 1 if pause else 0
-        )
-        if not ok:
-            raise self._connect_error(
-                f"failed to connect over named pipe {named_pipe!r}", _pipe_hint(named_pipe)
-            )
-        self._mode = "remote"
-        self._connected = True
+        self._connect_failure = None
+
+        def run() -> None:
+            try:
+                if not dll_connect():
+                    self._connect_failure = self._connect_error(failure, hint())
+                    return
+                self._mode = "remote"
+                self._connected = True
+                _log.info("connected to remote HyperDbg debuggee")
+                if not pause:
+                    self.continue_debuggee()
+            except Exception as exc:  # surfaced via last_connect_error / the caller
+                self._connect_failure = exc
+
+        if wait is None:
+            run()
+        else:
+            self._connect_thread = threading.Thread(target=run, daemon=True)
+            self._connect_thread.start()
+            self._connect_thread.join(wait)
+            if self._connect_thread.is_alive():
+                return False
+        if self._connect_failure is not None:
+            raise self._connect_failure
+        return True
 
     def connect_remote_net(self, ip: str, port: str) -> None:
         """Debugger Mode over TCP to a remote debuggee."""
@@ -253,9 +315,13 @@ class HyperDbgSession:
         callback. In Debugger Mode part of it may come from the debuggee, so it
         is fenced like any other untrusted output.
         """
+        output = self._drain_settled()
+        if "already connected to remote machine" in output:
+            # libhyperdbg in *this* process is still attached, e.g. an earlier
+            # connect that completed after its tool call was given up on.
+            hint = "this server is already attached to a debuggee; use hd_disconnect first"
         if hint:
             message += f": {hint}"
-        output = self._drain_settled()
         if output.strip():
             message += "\n" + wrap_untrusted(output, "connect-output")
         return HyperDbgError(message)
@@ -462,6 +528,11 @@ class HyperDbgSession:
         return int(pkt.SmiCount)
 
     def _require_connected(self) -> None:
+        # The connect thread itself may act on the fresh session (pause=False resume).
+        if self.is_connecting and threading.current_thread() is not self._connect_thread:
+            raise NotConnectedError(
+                "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
+            )
         if not self._connected:
             raise NotConnectedError("HyperDbg session is not connected")
         if self.is_running:

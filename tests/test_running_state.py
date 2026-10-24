@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import subprocess
 import sys
 import textwrap
@@ -187,3 +188,93 @@ def test_unload_vmm_also_unloads_kd_and_local_close_releases_modules():
     s.connect_local()
     s.close()  # a leftover kd module would keep a thread blocked in the driver
     assert dll.calls == ["unload_vmm", "unload_kd"]
+
+
+class HandshakeDll(RunningDll):
+    """Named-pipe connect that blocks until the debuggee's handshake (`arrive`)."""
+
+    def __init__(self, output=b""):
+        super().__init__()
+        self.arrive = threading.Event()
+        self.pause_args: list[int] = []
+        self.output = output
+
+    def hyperdbg_u_connect_remote_debugger_using_named_pipe(self, name, pause):
+        self.pause_args.append(pause)
+        if self.output:
+            self._cb(self.output)
+            return 0
+        self.arrive.wait(5)
+        return 1
+
+
+def test_connect_always_pauses_then_continues_for_pause_false():
+    # libhyperdbg's connect with pause=0 never returns while the debuggee runs.
+    dll = HandshakeDll()
+    dll.arrive.set()
+    s = HyperDbgSession(dll=dll)
+    assert s.connect_remote_pipe(r"\.\pipe\x", pause=False) is True
+    assert dll.pause_args == [1]
+    assert s.is_connected and s.is_running  # resumed with the non-blocking continue
+    dll.halt.set()
+
+
+def test_connect_waiting_for_handshake_returns_and_completes_later():
+    dll = HandshakeDll()
+    s = HyperDbgSession(dll=dll)
+    assert s.connect_remote_pipe(r"\.\pipe\x", wait=0.2) is False
+    assert s.is_connecting and not s.is_connected
+    with pytest.raises(HyperDbgError, match="still connecting"):
+        s.run_command("r")
+    with pytest.raises(HyperDbgError, match="already waiting"):
+        s.connect_remote_pipe(r"\.\pipe\x", wait=0.1)
+    dll.arrive.set()  # e.g. the VM was rebooted and its `.debug prepare` pinged
+    s._connect_thread.join(2)
+    assert s.is_connected and not s.is_connecting
+
+
+def test_already_attached_in_this_process_is_named_as_such():
+    msg = b"err, the current system is already connected to remote machine (debuggee)\n"
+    s = HyperDbgSession(dll=HandshakeDll(output=msg))
+    with pytest.raises(HyperDbgError, match="this server is already attached"):
+        s.connect_remote_pipe(r"\.\pipe\x")
+
+
+async def test_hd_connect_returns_while_the_handshake_is_pending(tmp_path):
+    from mcp import Client
+
+    from hyperdbg_mcp import server
+
+    dll = HandshakeDll()
+    srv = server.build_server(
+        read_only=True,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: HyperDbgSession(dll=dll),
+    )
+    async with Client(srv) as client:
+        args = {"transport": "pipe", "pipe": r"\.\pipe\x", "wait_seconds": 1}
+        out = (await client.call_tool("hd_connect", args)).content[0].text
+        assert out.startswith("connecting:")
+        status = (await client.call_tool("hd_connection_status", {})).content[0].text
+        assert "connecting=True" in status
+        disc = (await client.call_tool("hd_disconnect", {})).content[0].text
+        assert "cannot abort" in disc
+        dll.arrive.set()
+        for _ in range(50):
+            status = (await client.call_tool("hd_connection_status", {})).content[0].text
+            if "connected=True" in status:
+                break
+            await asyncio.sleep(0.05)
+        assert "connected=True" in status
+
+
+def test_background_connect_with_pause_false_resumes_the_debuggee():
+    # The resume runs on the connect thread, which must not trip "still connecting".
+    dll = HandshakeDll()
+    s = HyperDbgSession(dll=dll)
+    assert s.connect_remote_pipe("pipe-x", pause=False, wait=0.2) is False
+    dll.arrive.set()
+    s._connect_thread.join(2)
+    assert s.is_connected and s.is_running and s.last_connect_error is None
+    dll.halt.set()

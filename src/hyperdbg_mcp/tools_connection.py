@@ -35,17 +35,30 @@ def _do_connect(
     pipe: str,
     ip: str,
     net_port: str,
-) -> None:
+    wait: float | None = None,
+) -> bool:
+    """Connect; False if a serial/pipe connect is still waiting for the handshake."""
     if transport == "serial":
-        session.connect_remote_com(port, baudrate, pause=pause)
-    elif transport == "local":
+        return session.connect_remote_com(port, baudrate, pause=pause, wait=wait) is not False
+    if transport == "local":
         session.connect_local()
     elif transport == "pipe":
-        session.connect_remote_pipe(pipe, pause=pause)
+        return session.connect_remote_pipe(pipe, pause=pause, wait=wait) is not False
     elif transport == "net":
         session.connect_remote_net(ip, net_port)
     else:
         raise HyperDbgError(f"unknown transport {transport!r} (use one of {_TRANSPORTS})")
+    return True
+
+
+def _waiting(wait: float) -> str:
+    return (
+        f"connecting: no handshake from the debuggee within {wait:.0f}s; still waiting in the "
+        "background (hd_connection_status shows connected= when it arrives). The first "
+        "connect can take a minute or two. If it never arrives, the debuggee is bound to an "
+        "earlier debugger session (it sends its handshake once per `.debug prepare`): "
+        "restart it - reboot the VM / rerun `.debug prepare` - and this connect completes."
+    )
 
 
 def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
@@ -62,6 +75,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         pipe: str = "",
         ip: str = "",
         net_port: str = "",
+        wait_seconds: int = 40,
     ) -> str:
         """Attach the debugger to a target.
 
@@ -74,14 +88,19 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
           - "net": Debugger Mode over TCP (`ip`, `net_port`).
 
         The first serial/pipe connect can take a minute or two while the
-        debuggee reinstalls its driver and synchronizes symbols.
+        debuggee reinstalls its driver and synchronizes symbols. A serial/pipe
+        connect returns after `wait_seconds` at most and keeps waiting for the
+        debuggee in the background; check hd_connection_status.
         """
         a = app_ctx(ctx)
         if a.session.is_connected:
             return f"already connected ({a.session.mode}); hd_disconnect first"
+        if getattr(a.session, "is_connecting", False):
+            return "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
+        wait = float(max(1, min(wait_seconds, 50)))  # stay under clients' ~60 s tool timeout
         try:
-            await anyio.to_thread.run_sync(
-                _do_connect, a.session, transport, port, baudrate, pause, pipe, ip, net_port
+            done = await anyio.to_thread.run_sync(
+                _do_connect, a.session, transport, port, baudrate, pause, pipe, ip, net_port, wait
             )
         except HyperDbgError as exc:
             a.audit.record("hd_connect", {"transport": transport}, status="error")
@@ -95,6 +114,9 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
             ip=ip,
             net_port=net_port,
         )
+        if not done:
+            a.audit.record("hd_connect", {"transport": transport, "port": port}, status="pending")
+            return _waiting(wait)
         a.audit.record("hd_connect", {"transport": transport, "port": port}, status="ok")
         return f"connected ({a.session.mode}, transport={transport})"
 
@@ -106,6 +128,12 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         stranded mid-frame (the case the serial resync fix guards against).
         """
         a = app_ctx(ctx)
+        if getattr(a.session, "is_connecting", False):
+            return (
+                "a connect is still waiting for the debuggee's handshake and libhyperdbg cannot "
+                "abort it: restart the debuggee to let it complete, or restart this server "
+                "to drop it"
+            )
         await anyio.to_thread.run_sync(a.session.close)
         a.audit.record("hd_disconnect", {}, status="ok")
         return "disconnected (resume + clean close sent)"
@@ -116,9 +144,11 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         a = app_ctx(ctx)
         if not last:
             return "no previous connection to repeat; use hd_connect first"
+        if getattr(a.session, "is_connecting", False):
+            return "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
         await anyio.to_thread.run_sync(a.session.close)
         try:
-            await anyio.to_thread.run_sync(
+            done = await anyio.to_thread.run_sync(
                 _do_connect,
                 a.session,
                 last["transport"],
@@ -128,10 +158,13 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
                 last["pipe"],
                 last["ip"],
                 last["net_port"],
+                40.0,
             )
         except HyperDbgError as exc:
             a.audit.record("hd_reconnect", {}, status="error")
             return f"reconnect failed: {exc}"
+        if not done:
+            return _waiting(40.0)
         a.audit.record("hd_reconnect", {}, status="ok")
         return f"reconnected ({a.session.mode})"
 
@@ -140,4 +173,9 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         """Report whether the debugger is attached and in which mode."""
         s = app_ctx(ctx).session
         running = getattr(s, "is_running", False)
-        return f"connected={s.is_connected}, mode={s.mode}, running={running}"
+        out = f"connected={s.is_connected}, mode={s.mode}, running={running}"
+        if getattr(s, "is_connecting", False):
+            out += ", connecting=True (waiting for the debuggee's handshake)"
+        elif not s.is_connected and getattr(s, "last_connect_error", None):
+            out += f"\nlast connect failed: {s.last_connect_error}"
+        return out
