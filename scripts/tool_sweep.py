@@ -79,6 +79,8 @@ class _ElicitResult:
 class _Ctx:
     """Fake MCP Context: lifespan_context + an auto-accepting elicit()."""
 
+    protocol_version = None  # pre-2026-07-28 path: synchronous ctx.elicit()
+
     def __init__(self, app):
         self.request_context = type("RC", (), {"lifespan_context": app})()
 

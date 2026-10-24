@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from .toolkit import RO, parse_addr, run_text
 
 
-def register_symbols(mcp: FastMCP, *, read_only: bool) -> None:
+def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_sym_examine", annotations=RO)
     def hd_sym_examine(pattern: str, ctx: Context) -> str:
         """Examine symbol by pattern."""

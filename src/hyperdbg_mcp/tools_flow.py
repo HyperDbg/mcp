@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .toolkit import DESTRUCTIVE, RO, run_text, run_text_confirmed
 
 
-def register_flow(mcp: FastMCP, *, read_only: bool) -> None:
+def register_flow(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_bp_list", annotations=RO)
     def hd_bp_list(ctx: Context) -> str:
         """List all breakpoints."""
@@ -22,7 +23,9 @@ def register_flow(mcp: FastMCP, *, read_only: bool) -> None:
         return
 
     @mcp.tool(name="hd_bp_modify", annotations=DESTRUCTIVE)
-    async def hd_bp_modify(breakpoint_id: int, action: str, ctx: Context) -> str:
+    async def hd_bp_modify(
+        breakpoint_id: int, action: str, ctx: Context
+    ) -> str | InputRequiredResult:
         """Modify breakpoint state (action: enable|disable|clear)."""
         cmd_map = {"enable": "be", "disable": "bd", "clear": "bc"}
         cmd = cmd_map.get(action, "be")
@@ -39,7 +42,7 @@ def register_flow(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_process_switch", annotations=DESTRUCTIVE)
     async def hd_process_switch(
         ctx: Context, pid: int = 0, eprocess: int = 0, list_only: bool = False
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Switch process context (list_only lists processes, pid or eprocess to switch)."""
         if list_only:
             cmd = ".process list"
@@ -65,7 +68,7 @@ def register_flow(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_thread_switch", annotations=DESTRUCTIVE)
     async def hd_thread_switch(
         ctx: Context, tid: int = 0, ethread: int = 0, list_only: bool = False
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Switch thread context (list_only lists threads, tid or ethread to switch)."""
         if list_only:
             cmd = ".thread list"

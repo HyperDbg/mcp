@@ -18,7 +18,7 @@
 from __future__ import annotations
 
 import anyio
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from .errors import HyperDbgError
 from .toolkit import RO, STATE, app_ctx
@@ -48,7 +48,7 @@ def _do_connect(
         raise HyperDbgError(f"unknown transport {transport!r} (use one of {_TRANSPORTS})")
 
 
-def register_connection(mcp: FastMCP, *, read_only: bool) -> None:
+def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
     # Remember the last successful connect so hd_reconnect can repeat it.
     last: dict[str, object] = {}
 

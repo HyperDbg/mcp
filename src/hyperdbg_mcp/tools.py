@@ -7,9 +7,9 @@
  * Structure (DESIGN §10, §11):
  *   - Read tools are annotated read-only and wrap all debuggee-sourced output
  *     in the untrusted-data envelope. They are plain (sync) functions so
- *     FastMCP runs them in its worker-thread pool, off the event loop.
- *   - Confirmation-gated tools are async (ctx.elicit is async). Their blocking
- *     ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
+ *     MCPServer runs them in its worker-thread pool, off the event loop.
+ *   - Confirmation-gated tools are async (require_confirmation is async). Their
+ *     blocking ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
  *     is never frozen.
  *   - Any tool that can mutate the target (arbitrary command, breakpoints,
  *     memory/register/script writes) is registered ONLY when not --read-only.
@@ -22,16 +22,16 @@ from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
-from mcp.server.fastmcp import Context
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import Context
+from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import parse_addr
+from .toolkit import parse_addr, require_confirmation
 
 if TYPE_CHECKING:  # pragma: no cover
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from .server import AppContext
 
@@ -48,27 +48,11 @@ class MemoryDump(BaseModel):
     hex: str = Field(description="Captured bytes, hex-encoded (untrusted-fenced)")
 
 
-class Confirm(BaseModel):
-    confirm: bool = Field(description="Proceed with this operation on the live target?")
-
-
 def _app(ctx: Context) -> AppContext:
     return ctx.request_context.lifespan_context
 
 
-async def _require_confirmation(ctx: Context, what: str) -> bool:
-    """Ask the client to confirm. Deny-by-default if elicitation is unavailable."""
-    try:
-        result = await ctx.elicit(
-            message=f"HyperDbg is a ring-0 debugger. Confirm: {what}", schema=Confirm
-        )
-    except Exception:
-        # Client doesn't advertise the elicitation capability, or it failed.
-        return False
-    return result.action == "accept" and bool(result.data and result.data.confirm)
-
-
-def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
+def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     """Register tools. Any target-mutating tool is skipped when read_only."""
 
     _RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
@@ -171,10 +155,13 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
 
     # ===== target-mutating tools (NOT registered under --read-only) ======= #
     @mcp.tool(name="hd_exec_command", annotations=_DESTRUCTIVE)
-    async def hd_exec_command(command: str, ctx: Context) -> str:
+    async def hd_exec_command(command: str, ctx: Context) -> str | InputRequiredResult:
         """Run a raw HyperDbg CLI command (arbitrary; may modify the target)."""
         app = _app(ctx)
-        if not await _require_confirmation(ctx, f"run `{command}`"):
+        confirmed = await require_confirmation(ctx, f"run `{command}`")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_exec_command", {"command": command}, status="denied")
             return "Denied by user."
         try:
@@ -195,12 +182,17 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Breakpoint set at {hex(addr)}."
 
     @mcp.tool(name="hd_mem_write", annotations=_DESTRUCTIVE)
-    async def hd_mem_write(address: str, data_hex: str, ctx: Context, pid: int = 0) -> str:
+    async def hd_mem_write(
+        address: str, data_hex: str, ctx: Context, pid: int = 0
+    ) -> str | InputRequiredResult:
         """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string)."""
         app = _app(ctx)
         addr = parse_addr(address)
         payload = bytes.fromhex(data_hex)
-        if not await _require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}"):
+        confirmed = await require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_mem_write", {"address": hex(addr)}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(
@@ -212,11 +204,14 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Wrote {len(payload)} bytes to {hex(addr)}."
 
     @mcp.tool(name="hd_reg_write", annotations=_DESTRUCTIVE)
-    async def hd_reg_write(name: str, value: str, ctx: Context) -> str:
+    async def hd_reg_write(name: str, value: str, ctx: Context) -> str | InputRequiredResult:
         """Write a value (hex string) to a single register."""
         app = _app(ctx)
         val = parse_addr(value)
-        if not await _require_confirmation(ctx, f"set {name} = {hex(val)}"):
+        confirmed = await require_confirmation(ctx, f"set {name} = {hex(val)}")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_reg_write", {"name": name}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(app.session.write_register, name, val)
@@ -224,10 +219,13 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Set {name} = {hex(val)}."
 
     @mcp.tool(name="hd_script_run", annotations=_DESTRUCTIVE)
-    async def hd_script_run(script: str, ctx: Context) -> str:
+    async def hd_script_run(script: str, ctx: Context) -> str | InputRequiredResult:
         """Run a HyperDbg script (Turing-complete; can modify target state)."""
         app = _app(ctx)
-        if not await _require_confirmation(ctx, "run a HyperDbg script"):
+        confirmed = await require_confirmation(ctx, "run a HyperDbg script")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_script_run", {}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(app.session.run_script, script)

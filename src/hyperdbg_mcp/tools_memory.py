@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .toolkit import DESTRUCTIVE, RO, parse_addr, run_text, run_text_confirmed
 
 
-def register_memory(mcp: FastMCP, *, read_only: bool) -> None:
+def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_mem_display", annotations=RO)
     def hd_mem_display(
         address: str,
@@ -73,7 +74,7 @@ def register_memory(mcp: FastMCP, *, read_only: bool) -> None:
         fmt: str = "byte",
         pid: int = 0,
         physical: bool = False,
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Edit debuggee memory at address (hex string; fmt: byte|dword|qword)."""
         addr = parse_addr(address)
         base = {"byte": "eb", "dword": "ed", "qword": "eq"}.get(fmt, "eb")

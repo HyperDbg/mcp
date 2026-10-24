@@ -12,12 +12,12 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from .toolkit import RO, app_ctx, parse_addr
 
 
-def register_hw(mcp: FastMCP, *, read_only: bool) -> None:
+def register_hw(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_assemble", annotations=RO)
     def hd_assemble(assembly: str, ctx: Context, address: str = "0") -> str:
         """Assemble x86-64 instruction(s) at `address` (hex string) to machine-code hex."""

@@ -7,7 +7,8 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .toolkit import DESTRUCTIVE, parse_addr, run_text_confirmed
 
@@ -24,14 +25,14 @@ def _suffix(pid: int, core: int, script: str) -> str:
     return "".join(parts)
 
 
-def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
+def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
     if read_only:
         return
 
     @mcp.tool(name="hd_hook_ept", annotations=DESTRUCTIVE)
     async def hd_hook_ept(
         address: str, ctx: Context, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Set EPT (Extended Page Tables) hook at address (hex string)."""
         addr = parse_addr(address)
         cmd = f"!epthook {addr:#x}" + _suffix(pid, core, script)
@@ -47,7 +48,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_ept2", annotations=DESTRUCTIVE)
     async def hd_hook_ept2(
         address: str, ctx: Context, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Set EPT2 (Extended Page Tables 2) hook at address (hex string)."""
         addr = parse_addr(address)
         cmd = f"!epthook2 {addr:#x}" + _suffix(pid, core, script)
@@ -69,7 +70,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Monitor memory attribute (read/write) in an address range (hex strings)."""
         frm = parse_addr(from_address)
         to = parse_addr(to_address)
@@ -86,7 +87,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_syscall", annotations=DESTRUCTIVE)
     async def hd_hook_syscall(
         ctx: Context, syscall_number: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all syscalls or specific syscall if syscall_number >= 0."""
         cmd = "!syscall"
         if syscall_number >= 0:
@@ -97,7 +98,9 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_hook_sysret", annotations=DESTRUCTIVE)
-    async def hd_hook_sysret(ctx: Context, pid: int = 0, core: int = 0, script: str = "") -> str:
+    async def hd_hook_sysret(
+        ctx: Context, pid: int = 0, core: int = 0, script: str = ""
+    ) -> str | InputRequiredResult:
         """Hook sysret (return from syscall) instruction."""
         cmd = "!sysret" + _suffix(pid, core, script)
         return await run_text_confirmed(
@@ -107,7 +110,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_cpuid", annotations=DESTRUCTIVE)
     async def hd_hook_cpuid(
         ctx: Context, eax: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all CPUID or specific function if eax >= 0."""
         cmd = "!cpuid"
         if eax >= 0:
@@ -120,7 +123,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_msrread", annotations=DESTRUCTIVE)
     async def hd_hook_msrread(
         ctx: Context, msr: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all MSR reads or specific MSR if msr >= 0."""
         cmd = "!msrread"
         if msr >= 0:
@@ -133,7 +136,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_msrwrite", annotations=DESTRUCTIVE)
     async def hd_hook_msrwrite(
         ctx: Context, msr: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all MSR writes or specific MSR if msr >= 0."""
         cmd = "!msrwrite"
         if msr >= 0:
@@ -144,7 +147,9 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_hook_tsc", annotations=DESTRUCTIVE)
-    async def hd_hook_tsc(ctx: Context, pid: int = 0, core: int = 0, script: str = "") -> str:
+    async def hd_hook_tsc(
+        ctx: Context, pid: int = 0, core: int = 0, script: str = ""
+    ) -> str | InputRequiredResult:
         """Hook TSC (Time Stamp Counter) instruction."""
         cmd = "!tsc" + _suffix(pid, core, script)
         return await run_text_confirmed(
@@ -152,7 +157,9 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_hook_pmc", annotations=DESTRUCTIVE)
-    async def hd_hook_pmc(ctx: Context, pid: int = 0, core: int = 0, script: str = "") -> str:
+    async def hd_hook_pmc(
+        ctx: Context, pid: int = 0, core: int = 0, script: str = ""
+    ) -> str | InputRequiredResult:
         """Hook PMC (Performance Monitoring Counters)."""
         cmd = "!pmc" + _suffix(pid, core, script)
         return await run_text_confirmed(
@@ -162,7 +169,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_ioin", annotations=DESTRUCTIVE)
     async def hd_hook_ioin(
         ctx: Context, port: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all IN instructions or specific port if port >= 0."""
         cmd = "!ioin"
         if port >= 0:
@@ -175,7 +182,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_ioout", annotations=DESTRUCTIVE)
     async def hd_hook_ioout(
         ctx: Context, port: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all OUT instructions or specific port if port >= 0."""
         cmd = "!ioout"
         if port >= 0:
@@ -186,7 +193,9 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_hook_vmcall", annotations=DESTRUCTIVE)
-    async def hd_hook_vmcall(ctx: Context, pid: int = 0, core: int = 0, script: str = "") -> str:
+    async def hd_hook_vmcall(
+        ctx: Context, pid: int = 0, core: int = 0, script: str = ""
+    ) -> str | InputRequiredResult:
         """Hook VMCALL (hypervisor call) instruction."""
         cmd = "!vmcall" + _suffix(pid, core, script)
         return await run_text_confirmed(
@@ -196,7 +205,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_exception", annotations=DESTRUCTIVE)
     async def hd_hook_exception(
         ctx: Context, idt_index: int = -1, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook all exceptions or specific exception if idt_index >= 0."""
         cmd = "!exception"
         if idt_index >= 0:
@@ -209,7 +218,7 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
     @mcp.tool(name="hd_hook_interrupt", annotations=DESTRUCTIVE)
     async def hd_hook_interrupt(
         idt_index: int, ctx: Context, pid: int = 0, core: int = 0, script: str = ""
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Hook specific interrupt by IDT index."""
         cmd = f"!interrupt {idt_index:#x}" + _suffix(pid, core, script)
         return await run_text_confirmed(
@@ -222,7 +231,9 @@ def register_hooks(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_hook_dr", annotations=DESTRUCTIVE)
-    async def hd_hook_dr(ctx: Context, pid: int = 0, core: int = 0, script: str = "") -> str:
+    async def hd_hook_dr(
+        ctx: Context, pid: int = 0, core: int = 0, script: str = ""
+    ) -> str | InputRequiredResult:
         """Hook debug register access."""
         cmd = "!dr" + _suffix(pid, core, script)
         return await run_text_confirmed(

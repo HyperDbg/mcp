@@ -11,9 +11,8 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from mcp.shared.memory import (  # noqa: E402
-    create_connected_server_and_client_session as client_session,
-)
+from mcp import Client  # noqa: E402
+from mcp.types import ElicitResult  # noqa: E402
 
 from hyperdbg_mcp import server  # noqa: E402
 
@@ -64,7 +63,7 @@ def _text(result) -> str:
 
 async def test_read_only_tool_list(tmp_path):
     srv = _build(read_only=True, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     assert {"hd_mem_read", "hd_reg_read_all", "hd_disasm"} <= names
     assert {"hd_mem_write", "hd_reg_write", "hd_script_run", "hd_exec_command"}.isdisjoint(names)
@@ -72,14 +71,14 @@ async def test_read_only_tool_list(tmp_path):
 
 async def test_reg_read_all_returns_registers(tmp_path):
     srv = _build(read_only=False, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         result = await client.call_tool("hd_reg_read_all", {})
     assert "0xdead" in _text(result).lower()
 
 
 async def test_mem_read_is_untrusted_wrapped(tmp_path):
     srv = _build(read_only=False, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         result = await client.call_tool("hd_mem_read", {"address": "0x1000", "size": 8})
     assert "BEGIN UNTRUSTED MEMORY" in _text(result)
 
@@ -88,14 +87,44 @@ async def test_write_denied_without_elicitation(tmp_path):
     # The default in-memory client advertises no elicitation capability, so the
     # confirmation must fail closed and the write must never reach the session.
     srv = _build(read_only=False, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         result = await client.call_tool("hd_reg_write", {"name": "rax", "value": "0x0"})
     assert "Denied by user." in _text(result)
 
 
+def _answer(confirm: bool):
+    async def elicit(_context, params):
+        assert "set rax = 0x5" in params.message
+        return ElicitResult(action="accept", content={"confirm": confirm})
+
+    return elicit
+
+
+@pytest.mark.parametrize("mode", ["2026-07-28", "legacy"])
+@pytest.mark.parametrize("confirm", [True, False])
+async def test_write_confirmed_via_elicitation(tmp_path, mode, confirm):
+    # 2026-07-28: confirmation rides InputRequiredResult and the client retries;
+    # legacy: a synchronous elicitation/create round-trip. Same outcome either way.
+    writes = []
+    session = FakeSession()
+    session.write_register = lambda name, value: writes.append((name, value))
+    srv = server.build_server(
+        read_only=False,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+    )
+    async with Client(srv, mode=mode, elicitation_callback=_answer(confirm)) as client:
+        result = await client.call_tool("hd_reg_write", {"name": "rax", "value": "0x5"})
+    if confirm:
+        assert "Set rax = 0x5." in _text(result) and writes == [("rax", 5)]
+    else:
+        assert "Denied by user." in _text(result) and writes == []
+
+
 async def test_full_tool_surface_present(tmp_path):
     srv = _build(read_only=False, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     # A sampling across every new domain module.
     assert {
@@ -109,7 +138,7 @@ async def test_full_tool_surface_present(tmp_path):
 
 async def test_read_only_excludes_gated_new_tools(tmp_path):
     srv = _build(read_only=True, tmp_path=tmp_path)
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         names = {t.name for t in (await client.list_tools()).tools}
     assert {
         "hd_mem_edit", "hd_hook_ept", "hd_msr_write", "hd_bp_modify",

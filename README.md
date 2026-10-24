@@ -58,6 +58,9 @@ with nothing paused.)
 **Target-mutating (full mode only, confirmation-gated):** `hd_exec_command`, `hd_bp_set`,
 `hd_mem_write`, `hd_reg_write`, `hd_script_run`.
 
+Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
+(the client retries the call with the answer); older revisions use `elicitation/create`.
+
 ## Development
 
 ```bash

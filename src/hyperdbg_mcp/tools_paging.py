@@ -7,12 +7,12 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
 
 from .toolkit import RO, parse_addr, run_text
 
 
-def register_paging(mcp: FastMCP, *, read_only: bool) -> None:
+def register_paging(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_va2pa", annotations=RO)
     def hd_va2pa(virtual_address: str, ctx: Context, pid: int = 0) -> str:
         """Convert virtual address (hex string) to physical address."""
