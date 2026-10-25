@@ -59,13 +59,15 @@ class MockSession:
         self._mode = "local"
 
     def connect_remote_com(
-        self, port_name: str, baudrate: int = 115200, pause: bool = True, wait=None
+        self, port_name: str, baudrate: int = 115200, pause: bool = True, wait=None, reattach="auto"
     ) -> bool:
         self.connected = True
         self._mode = "remote"
         return True
 
-    def connect_remote_pipe(self, named_pipe: str, pause: bool = True, wait=None) -> bool:
+    def connect_remote_pipe(
+        self, named_pipe: str, pause: bool = True, wait=None, reattach="auto"
+    ) -> bool:
         self.connected = True
         self._mode = "remote"
         return True

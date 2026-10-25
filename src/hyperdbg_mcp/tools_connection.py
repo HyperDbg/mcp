@@ -21,9 +21,14 @@ import anyio
 from mcp.server.mcpserver import Context, MCPServer
 
 from .errors import HyperDbgError
-from .toolkit import RO, STATE, app_ctx
+from .toolkit import RO, STATE, app_ctx, choose
 
 _TRANSPORTS = ("serial", "local", "pipe", "net")
+_REATTACH = {m: m for m in ("auto", "always", "never")}
+
+
+def _reattached(app) -> bool:
+    return getattr(app.session, "reattached", False)
 
 
 def _do_connect(
@@ -36,14 +41,17 @@ def _do_connect(
     ip: str,
     net_port: str,
     wait: float | None = None,
+    reattach: str = "auto",
 ) -> bool:
     """Connect; False if a serial/pipe connect is still waiting for the handshake."""
     if transport == "serial":
-        return session.connect_remote_com(port, baudrate, pause=pause, wait=wait) is not False
+        done = session.connect_remote_com(port, baudrate, pause=pause, wait=wait, reattach=reattach)
+        return done is not False
     if transport == "local":
         session.connect_local()
     elif transport == "pipe":
-        return session.connect_remote_pipe(pipe, pause=pause, wait=wait) is not False
+        done = session.connect_remote_pipe(pipe, pause=pause, wait=wait, reattach=reattach)
+        return done is not False
     elif transport == "net":
         session.connect_remote_net(ip, net_port)
     else:
@@ -76,6 +84,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         ip: str = "",
         net_port: str = "",
         wait_seconds: int = 10,
+        reattach: str = "auto",
     ) -> str:
         """Attach the debugger to a target.
 
@@ -91,6 +100,13 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         debuggee reinstalls its driver and synchronizes symbols. A serial/pipe
         connect returns after `wait_seconds` at most and keeps waiting for the
         debuggee in the background; check hd_connection_status.
+
+        reattach ("auto" | "always" | "never"): a debuggee sends its handshake once
+        per `.debug prepare`, so after its debugger died (e.g. this server was
+        restarted) only a takeover reaches it. With a libhyperdbg that has
+        `.debug remote ... reattach`, "auto" takes such a debuggee over and still
+        handshakes with one that waits for a debugger; otherwise it is a plain
+        handshake. "never" always handshakes.
         """
         a = app_ctx(ctx)
         if a.session.is_connected:
@@ -98,9 +114,20 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         if getattr(a.session, "is_connecting", False):
             return "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
         wait = float(max(1, min(wait_seconds, 50)))  # stay under clients' ~60 s tool timeout
+        mode = choose(reattach, _REATTACH, "reattach")
         try:
             done = await anyio.to_thread.run_sync(
-                _do_connect, a.session, transport, port, baudrate, pause, pipe, ip, net_port, wait
+                _do_connect,
+                a.session,
+                transport,
+                port,
+                baudrate,
+                pause,
+                pipe,
+                ip,
+                net_port,
+                wait,
+                mode,
             )
         except HyperDbgError as exc:
             a.audit.record("hd_connect", {"transport": transport}, status="error")
@@ -113,12 +140,14 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
             pipe=pipe,
             ip=ip,
             net_port=net_port,
+            reattach=mode,
         )
         if not done:
             a.audit.record("hd_connect", {"transport": transport, "port": port}, status="pending")
             return _waiting(wait)
         a.audit.record("hd_connect", {"transport": transport, "port": port}, status="ok")
-        return f"connected ({a.session.mode}, transport={transport})"
+        how = ", reattached to a debuggee left by an earlier debugger" if _reattached(a) else ""
+        return f"connected ({a.session.mode}, transport={transport}{how})"
 
     @mcp.tool(name="hd_disconnect", annotations=STATE)
     async def hd_disconnect(ctx: Context) -> str:
@@ -159,6 +188,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
                 last["ip"],
                 last["net_port"],
                 10.0,
+                last["reattach"],
             )
         except HyperDbgError as exc:
             a.audit.record("hd_reconnect", {}, status="error")
@@ -174,6 +204,8 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         s = app_ctx(ctx).session
         running = getattr(s, "is_running", False)
         out = f"connected={s.is_connected}, mode={s.mode}, running={running}"
+        if getattr(s, "reattached", False):
+            out += ", reattached=True"
         if getattr(s, "is_connecting", False):
             out += ", connecting=True (waiting for the debuggee's handshake)"
         elif not s.is_connected and getattr(s, "last_connect_error", None):

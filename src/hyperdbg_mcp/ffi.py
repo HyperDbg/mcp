@@ -253,6 +253,15 @@ def _configure(dll: CDLL) -> None:
     ]
     dll.hyperdbg_u_connect_remote_debugger_using_named_pipe.restype = c_ubyte
     dll.hyperdbg_u_connect_remote_debugger_using_named_pipe.argtypes = [c_char_p, c_ubyte]
+    # `.debug remote ... reattach` (HyperDbg PR #701): absent from older builds.
+    reattach_pipe = getattr(dll, "hyperdbg_u_reattach_remote_debugger_using_named_pipe", None)
+    if reattach_pipe is not None:
+        reattach_pipe.restype = c_ubyte
+        reattach_pipe.argtypes = [c_char_p, c_ubyte]
+    reattach_com = getattr(dll, "hyperdbg_u_reattach_remote_debugger_using_com_port", None)
+    if reattach_com is not None:
+        reattach_com.restype = c_ubyte
+        reattach_com.argtypes = [c_char_p, c_uint32, c_ubyte]
     dll.hyperdbg_u_connect_remote_debugger.restype = c_ubyte
     dll.hyperdbg_u_connect_remote_debugger.argtypes = [c_char_p, c_char_p]  # ip, port
     dll.hyperdbg_u_debug_close_remote_debugger.restype = c_ubyte

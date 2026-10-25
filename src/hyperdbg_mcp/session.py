@@ -142,6 +142,23 @@ def _pipe_hint(named_pipe: str) -> str:
     return f"pipe unavailable (Windows error {err})"
 
 
+def _wait_for_pipe(named_pipe: str, timeout: float = 3.0) -> None:
+    """Wait for a VM to re-create its pipe instance after a client closed it.
+
+    For ~0.2 s the pipe does not exist at all, and WaitNamedPipe returns at once
+    for a missing pipe instead of waiting, so poll it.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32")
+    k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+    deadline = time.monotonic() + timeout
+    while not k32.WaitNamedPipeW(named_pipe, 50) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
 class HyperDbgSession:
     """Owns the libhyperdbg handle and serializes access to it.
 
@@ -163,6 +180,7 @@ class HyperDbgSession:
         # Debugger-Mode connect still waiting for the debuggee's handshake.
         self._connect_thread: threading.Thread | None = None
         self._connect_failure: BaseException | None = None
+        self._reattached = False  # last connect took over a debuggee instead of a handshake
         # Persistent reference - MUST outlive every callback invocation.
         self._text_cb = ffi.TextMessageCallback(self._on_text)
 
@@ -201,16 +219,21 @@ class HyperDbgSession:
         baudrate: int = 115200,
         pause: bool = True,
         wait: float | None = None,
+        reattach: str = "auto",
     ) -> bool:
         """Debugger Mode over a serial/COM port to a remote debuggee.
 
         pause=True leaves the debuggee halted on connect, giving a valid CPU
         context for register/memory reads and stepping. See _connect_debugger_mode
-        for `wait` and the return value.
+        for `wait` and the return value, connect_remote_pipe for `reattach`.
         """
+        port, baud = port_name.encode("utf-8"), int(baudrate)
+        reattach_fn = getattr(self._dll, "hyperdbg_u_reattach_remote_debugger_using_com_port", None)
         return self._connect_debugger_mode(
-            lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(
-                port_name.encode("utf-8"), int(baudrate), 1
+            self._reattach_or_handshake(
+                lambda: reattach_fn(port, baud, 1),
+                lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(port, baud, 1),
+                use_reattach=reattach_fn is not None and reattach != "never",
             ),
             pause,
             wait,
@@ -218,18 +241,68 @@ class HyperDbgSession:
         )
 
     def connect_remote_pipe(
-        self, named_pipe: str, pause: bool = True, wait: float | None = None
+        self,
+        named_pipe: str,
+        pause: bool = True,
+        wait: float | None = None,
+        reattach: str = "auto",
     ) -> bool:
-        """Debugger Mode over a named pipe to a remote debuggee (e.g. a VM serial port)."""
+        """Debugger Mode over a named pipe to a remote debuggee (e.g. a VM serial port).
+
+        reattach (needs a libhyperdbg with `.debug remote ... reattach`): a
+        debuggee sends its handshake once per `.debug prepare`, so after its
+        debugger died (e.g. this server was restarted) only a takeover reaches it.
+        libhyperdbg's reattach takes a debuggee over or, if it is still waiting
+        for a debugger, finishes the handshake, telling the two apart from what
+        the debuggee sends - without closing the pipe, which would end a waiting
+        debuggee's `.debug prepare`. "auto"/"always" use it when the library
+        has it, then fall back to a plain handshake; "never" skips it.
+        """
+        name = named_pipe.encode("utf-8")
+        reattach_fn = getattr(
+            self._dll, "hyperdbg_u_reattach_remote_debugger_using_named_pipe", None
+        )
+
         return self._connect_debugger_mode(
-            lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(
-                named_pipe.encode("utf-8"), 1
+            self._reattach_or_handshake(
+                lambda: reattach_fn(name, 1),
+                lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(name, 1),
+                use_reattach=reattach_fn is not None and reattach != "never",
+                after_failed_reattach=lambda: _wait_for_pipe(named_pipe),
             ),
             pause,
             wait,
             f"failed to connect over named pipe {named_pipe!r}",
             lambda: _pipe_hint(named_pipe),
         )
+
+    def _reattach_or_handshake(
+        self, reattach, handshake, *, use_reattach, after_failed_reattach=lambda: None
+    ):
+        """The connect step: take over the debuggee if asked to, else (or then) handshake.
+
+        Runs on the connect thread, so the takeover counts against hd_connect's
+        wait like the handshake itself.
+        """
+
+        def connect() -> int:
+            self._reattached = False
+            if use_reattach:
+                if reattach():
+                    # libhyperdbg's reattach also completes a plain handshake when
+                    # the debuggee was still waiting; only a takeover says this.
+                    self._reattached = "reattached to the debuggee" in self._peek()
+                    return 1
+                self._drain()  # the failed takeover's messages are not this connect's
+                after_failed_reattach()
+            return handshake()
+
+        return connect
+
+    @property
+    def reattached(self) -> bool:
+        """True if the current connection took over a debuggee left by an earlier debugger."""
+        return self._connected and self._reattached
 
     @property
     def is_connecting(self) -> bool:
@@ -560,6 +633,13 @@ class HyperDbgSession:
             except queue.Empty:
                 break
         return "".join(parts)
+
+    def _peek(self) -> str:
+        """The output queued so far, left in place for whoever drains it."""
+        text = self._drain()
+        if text:
+            self._output.put(text)
+        return text
 
     def _drain_settled(self, quiet_s: float = 0.02, max_s: float = 0.25) -> str:
         """Drain with a short quiescence window.
