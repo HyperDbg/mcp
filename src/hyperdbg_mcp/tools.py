@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import re
 from functools import partial
 from typing import TYPE_CHECKING
 
@@ -36,6 +37,21 @@ if TYPE_CHECKING:  # pragma: no cover
     from .server import AppContext
 
 _MAX_DISASM = 256
+_MAX_INSN_LEN = 15  # longest x86 instruction, in bytes
+# A disassembly line starts with its address: fffff802`79afd130 or 00401000.
+_INSN_LINE = re.compile(r"[0-9a-fA-F]{8}(?:`[0-9a-fA-F]{8})?\s")
+
+
+def _first_instructions(listing: str, count: int) -> str:
+    """Cut a `u` listing after `count` instruction lines (symbol labels kept)."""
+    lines, seen = [], 0
+    for line in listing.splitlines(keepends=True):
+        if _INSN_LINE.match(line):
+            if seen == count:
+                break
+            seen += 1
+        lines.append(line)
+    return "".join(lines)
 
 
 class RegisterDump(BaseModel):
@@ -113,7 +129,10 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
         addr = resolve_addr(ctx, address)
         count = max(1, min(count, _MAX_DISASM))
         cmd = choose(str(bits), {"64": "u", "32": "u32"}, "bits")
-        out = app.session.run_command(f"{cmd} {hex(addr)} l {count:x}")
+        # `l` is a length in bytes, not instructions: ask for the longest
+        # `count` instructions can be, then keep the first `count`.
+        out = app.session.run_command(f"{cmd} {hex(addr)} l {count * _MAX_INSN_LEN:x}")
+        out = _first_instructions(out, count)
         app.audit.record("hd_disasm", {"address": hex(addr), "count": count}, status="ok")
         return wrap_untrusted(out, "disassembly")
 

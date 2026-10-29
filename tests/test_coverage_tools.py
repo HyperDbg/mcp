@@ -36,7 +36,7 @@ _CASES = [
     ("hd_preactivate", {}, "preactivate mode"),
     ("hd_mem_display", {"address": "0x1000", "size": 0x20, "fmt": "qword_sym"},
      "dqs 0x1000 l 0x20"),
-    ("hd_disasm", {"address": "0x1000", "count": 4, "bits": 32}, "u32 0x1000 l 4"),
+    ("hd_disasm", {"address": "0x1000", "count": 4, "bits": 32}, "u32 0x1000 l 3c"),
     ("hd_apic_local", {}, "!apic"),
     ("hd_pe_parse", {"path": "c:/reverse files/a.exe", "section": ".text"},
      '.pe section .text "c:/reverse files/a.exe"'),

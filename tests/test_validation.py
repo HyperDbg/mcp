@@ -182,3 +182,17 @@ async def test_mem_read_never_evaluates_arbitrary_script(tmp_path, address):
         result = await client.call_tool("hd_mem_read", {"address": address, "size": 1})
     assert result.is_error and "invalid address" in _text(result)
     assert session.evaluated == [] and session.reads == []
+
+
+def test_disasm_keeps_only_the_requested_instructions():
+    from hyperdbg_mcp.tools import _first_instructions
+
+    listing = (
+        "ntkrnlmp!KeBugCheckEx:\n"
+        "fffff802`79afd130    48 89 4C 24 08    mov qword ptr ss:[rsp+0x08], rcx\n"
+        "fffff802`79afd135    48 89 54 24 10    mov qword ptr ss:[rsp+0x10], rdx\n"
+        "fffff802`79afd13a    4C 89 44 24 18    mov qword ptr ss:[rsp+0x18], r8\n"
+    )
+    out = _first_instructions(listing, 2)
+    assert out.startswith("ntkrnlmp!KeBugCheckEx:\n")
+    assert "79afd135" in out and "79afd13a" not in out
