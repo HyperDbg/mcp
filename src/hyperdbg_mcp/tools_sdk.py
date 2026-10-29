@@ -121,7 +121,11 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_modules_load_all", annotations=DESTRUCTIVE)
     async def hd_modules_load_all(ctx: Context) -> str | InputRequiredResult:
-        """Load all HyperDbg kernel modules."""
+        """Load all HyperDbg kernel modules.
+
+        Note that hd_modules_unload_all takes everything down, the VMM included:
+        run hd_vmm_load again (and hd_sym_reload) before the next session step.
+        """
         return await _gated(
             ctx,
             what="load all HyperDbg modules",

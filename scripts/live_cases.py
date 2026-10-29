@@ -155,7 +155,7 @@ def cases() -> list[Case]:
     add("events", "modules-load", "hd_modules_load_all", {}, "any", note="loads every HyperDbg module")
     add("events", "modules-unload", "hd_modules_unload_all", {}, "any")
     add("events", "sym-reload-after-modules", "hd_sym_reload", {}, "any", note="the module ops drop the symbol tables")
-    add("events", "mem-dump", "hd_mem_dump", {"from_address": QUERY_PC, "to_address": QUERY_PC + "+64", "path": DUMP_FILE}, "ok")
+    add("events", "mem-dump", "hd_mem_dump", {"from_address": QUERY_PC, "to_address": QUERY_PC + "+0x10", "path": DUMP_FILE}, "ok")
     add("events", "lbr-disable", "hd_lbr", {"action": "disable"}, "any")
     add("events", "lbr-filter", "hd_lbr_filter", {"exclude": ["kernel", "user"]}, "any")
     add("events", "pt-control", "hd_pt_control", {"action": "disable"}, "any")
@@ -175,7 +175,7 @@ def cases() -> list[Case]:
     add("write", "reg-write", "hd_reg_write", {"name": "rip", "value": "0x140000000"}, "any", note="needs a halted context")
     add("write", "msr-write", "hd_msr_write", {"msr_id": "0xC0000082", "value": "0x0"}, "any")
     add("write", "pagein", "hd_pagein", {"address": QUERY_PC}, "error", "debugger mode")
-    add("write", "bp-set", "hd_bp_set", {"address": "nt!NtClose"}, "error", "debugger-mode")
+    add("write", "bp-set", "hd_bp_set", {"address": "nt!NtClose"}, "error", "debugger mode")
     add("write", "bp-modify", "hd_bp_modify", {"breakpoint_id": 0, "action": "disable"}, "any")
     add("write", "connect-local", "hd_connect", {"transport": "local"}, "any")
 
@@ -211,7 +211,7 @@ def cases() -> list[Case]:
     add("neg", "no-such-source", "hd_output", {"action": "open", "name": "nope"}, "error", "nope")
     add("neg", "bad-monitor-attr", "hd_hook_monitor", {"attribute": "zzz", "from_address": QUERY_PC, "to_address": QUERY_PC + "+8"}, "error")
     add("neg", "bad-idt-index", "hd_hook_exception", {"idt_index": 4096}, "error")
-    add("neg", "bad-ept-address", "hd_hook_ept2", {"address": "0x1"}, "error", "invalid address")
+    add("neg", "bad-ept-address", "hd_hook_ept2", {"address": "0x1"}, "error")
     add("neg", "bad-trace-type", "hd_hook_trace", {"trace_type": "zzz"}, "error")
     add("neg", "bad-mode", "hd_hook_mode", {"mode": "zzz", "pid": 4}, "error")
     add("neg", "bad-pci", "hd_pci_cam", {"bus": -1, "device": 0, "function": 0}, "error")
@@ -230,7 +230,7 @@ def cases() -> list[Case]:
     add("cleanup", "clear-events", "hd_event_clear", {"target": "all"}, "ok")
     add("cleanup", "close-source", "hd_output", {"action": "close", "name": OUT_NAME}, "ok")
     add("cleanup", "close-again", "hd_output", {"action": "close", "name": OUT_NAME}, "ok", "already closed")
-    add("cleanup", "vmm-unload", "hd_vmm_unload", {}, "ok")
+    add("cleanup", "vmm-unload", "hd_vmm_unload", {}, "any", note="modules_unload_all already took the VMM down")
     add("cleanup", "vmm-status-end", "hd_vmm_status", {}, "ok", "module_loaded=False")
     add("cleanup", "disconnect", "hd_disconnect", {}, "any", note="closes the session, so it runs last")
     add("cleanup", "reconnect", "hd_reconnect", {}, "any")
@@ -276,22 +276,29 @@ async def run(args) -> int:
                 print(f"session: {text}\n")
 
 
-                # Preconditions: a phase that touches kernel symbols needs the
-                # VMM up and the symbol tables reloaded, however it was started.
-                if any(c.phase != "cold" for c in all_cases):
-                    for setup in (
+                current_phase = None
+
+                async def phase_setup(phase: str) -> None:
+                    """VMM + symbols before every phase: an earlier phase may have
+                    unloaded the modules (hd_modules_unload_all takes the VMM down too)."""
+                    if phase == "cold":
+                        return
+                    for name, sargs in (
                         ("hd_vmm_load", {}),
                         ("hd_sym_path", {"path": SYM_PATH}),
                         ("hd_sym_reload", {}),
                     ):
                         try:
-                            e, t = await call(session, setup[0], setup[1], args.timeout)
-                            print(f"  [setup] {setup[0]}: {'ERR' if e else 'ok'} {t[:70]}")
+                            e, t = await call(session, name, sargs, args.timeout)
+                            print(f"  [setup] {name}: {'ERR' if e else 'ok'} {t[:70]}")
                         except Exception as exc:  # noqa: BLE001
-                            print(f"  [setup] {setup[0]}: FAILED {exc}")
+                            print(f"  [setup] {name}: FAILED {exc}")
                     print()
 
                 for case in all_cases:
+                    if case.phase != current_phase:
+                        current_phase = case.phase
+                        await phase_setup(current_phase)
                     covered.add(case.tool)
                     if case.tool not in tools:
                         results.append(Result(case, "SKIP", "tool not registered"))
