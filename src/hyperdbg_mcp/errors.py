@@ -7,9 +7,14 @@
 
 from __future__ import annotations
 
+from mcp.server.mcpserver.exceptions import ToolError
 
-class HyperDbgError(Exception):
+
+class HyperDbgError(ToolError):
     """Base error for all HyperDbg / libhyperdbg failures.
+
+    A ToolError, so mcp>=2 returns the message to the model instead of the
+    generic "Error executing tool" it uses for unexpected exceptions.
 
     ``status_code`` carries the raw BOOLEAN/INT returned by libhyperdbg when
     available, so callers (and error-recovery guidance) can branch on it.

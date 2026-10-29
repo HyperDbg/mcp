@@ -253,13 +253,23 @@ def _configure(dll: CDLL) -> None:
     ]
     dll.hyperdbg_u_connect_remote_debugger_using_named_pipe.restype = c_ubyte
     dll.hyperdbg_u_connect_remote_debugger_using_named_pipe.argtypes = [c_char_p, c_ubyte]
+    # `.debug remote ... reattach` (HyperDbg PR #701): absent from older builds.
+    reattach_pipe = getattr(dll, "hyperdbg_u_reattach_remote_debugger_using_named_pipe", None)
+    if reattach_pipe is not None:
+        reattach_pipe.restype = c_ubyte
+        reattach_pipe.argtypes = [c_char_p, c_ubyte]
+    reattach_com = getattr(dll, "hyperdbg_u_reattach_remote_debugger_using_com_port", None)
+    if reattach_com is not None:
+        reattach_com.restype = c_ubyte
+        reattach_com.argtypes = [c_char_p, c_uint32, c_ubyte]
     dll.hyperdbg_u_connect_remote_debugger.restype = c_ubyte
     dll.hyperdbg_u_connect_remote_debugger.argtypes = [c_char_p, c_char_p]  # ip, port
     dll.hyperdbg_u_debug_close_remote_debugger.restype = c_ubyte
     dll.hyperdbg_u_debug_close_remote_debugger.argtypes = []
 
-    # Returns an unsigned status; OPERATION_WAS_SUCCESSFUL (0xFFFFFFFF) == success.
-    dll.hyperdbg_u_run_command.restype = c_uint32
+    # INT status: 0 on success, an 0xC0000xxx error code on failure (see
+    # session._is_error_status, which compares the low 32 bits).
+    dll.hyperdbg_u_run_command.restype = c_int
     dll.hyperdbg_u_run_command.argtypes = [c_char_p]
 
     dll.hyperdbg_u_set_text_message_callback.restype = None
@@ -355,9 +365,13 @@ def _configure(dll: CDLL) -> None:
     dll.hyperdbg_u_is_any_module_loaded.restype = c_ubyte
     dll.hyperdbg_u_is_any_module_loaded.argtypes = []
 
+    dll.hyperdbg_u_install_kd_driver.restype = c_int  # 0 = ok, 1 = failed
+    dll.hyperdbg_u_install_kd_driver.argtypes = []
     dll.hyperdbg_u_load_vmm.restype = c_int
     dll.hyperdbg_u_load_vmm.argtypes = []
 
+    dll.hyperdbg_u_unload_kd.restype = c_int
+    dll.hyperdbg_u_unload_kd.argtypes = []
     dll.hyperdbg_u_unload_vmm.restype = c_int
     dll.hyperdbg_u_unload_vmm.argtypes = []
 
@@ -427,4 +441,26 @@ def load_libhyperdbg(path: str | None = None) -> CDLL:
             "and Python bitness matches the DLL (x64)."
         ) from exc
     _configure(dll)
+    _use_driver_next_to_dll(dll)
     return dll
+
+
+def _use_driver_next_to_dll(dll: CDLL) -> None:
+    """Point libhyperdbg at the hyperkd.sys shipped beside the DLL.
+
+    libhyperdbg looks for its driver next to the process EXE (GetModuleHandle
+    (NULL)): fine for hyperdbg-cli.exe, but under Python that is python.exe's
+    folder, so `load vmm` fails with "target file is not loaded".
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    buf = ctypes.create_unicode_buffer(32768)
+    if not ctypes.windll.kernel32.GetModuleFileNameW(ctypes.c_void_p(dll._handle), buf, len(buf)):
+        return
+    driver = os.path.join(os.path.dirname(buf.value), "hyperkd.sys")
+    if os.path.isfile(driver):
+        dll.hyperdbg_u_set_custom_driver_path.restype = c_ubyte
+        dll.hyperdbg_u_set_custom_driver_path.argtypes = [c_char_p, c_char_p]
+        dll.hyperdbg_u_set_custom_driver_path(driver.encode("mbcs"), b"hyperkd")

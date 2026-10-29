@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .safety import AuditLog
 from .session import HyperDbgSession
@@ -49,6 +49,9 @@ class AppContext:
     session: HyperDbgSession
     audit: AuditLog
     read_only: bool
+    # Pre-approve target-mutating tools for clients that cannot elicit (see
+    # require_confirmation): without it every destructive call fails closed.
+    assume_consent: bool = False
 
 
 def build_server(
@@ -58,7 +61,8 @@ def build_server(
     audit_path: str,
     session_factory: Callable[[], HyperDbgSession] | None = None,
     connect: Callable[[HyperDbgSession], None] | None = None,
-) -> FastMCP:
+    assume_consent: bool = False,
+) -> MCPServer:
     audit = AuditLog(audit_path)
 
     def _default_factory() -> HyperDbgSession:
@@ -71,7 +75,7 @@ def build_server(
     do_connect = connect
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
+    async def lifespan(_server: MCPServer) -> AsyncIterator[AppContext]:
         session = factory()
         if do_connect is not None:
             do_connect(session)
@@ -79,12 +83,17 @@ def build_server(
         # exit. close() is idempotent, so the finally + atexit can't double-act.
         atexit.register(session.close)
         try:
-            yield AppContext(session=session, audit=audit, read_only=read_only)
+            yield AppContext(
+                session=session,
+                audit=audit,
+                read_only=read_only,
+                assume_consent=assume_consent,
+            )
         finally:
             atexit.unregister(session.close)
             session.close()
 
-    mcp = FastMCP("hyperdbg-mcp", lifespan=lifespan)
+    mcp = MCPServer("hyperdbg-mcp", lifespan=lifespan)
     register_tools(mcp, read_only=read_only)
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)
@@ -106,6 +115,16 @@ def main() -> None:
             "Register only non-mutating tools: reads, disassembly, module list, "
             "and execution control (continue/pause/step). Excludes arbitrary "
             "commands, breakpoints, and memory/register/script writes."
+        ),
+    )
+    parser.add_argument(
+        "--assume-consent",
+        action="store_true",
+        help=(
+            "Pre-approve target-mutating tools (hd_exec_command, hd_mem_write, "
+            "hd_reg_write, hd_script_run, SDK calls). Use when the MCP client "
+            "cannot elicit confirmation: otherwise every destructive tool "
+            "fails closed."
         ),
     )
     parser.add_argument(
@@ -171,6 +190,7 @@ def main() -> None:
         audit_path=args.audit_log,
         session_factory=session_factory,
         connect=connect,
+        assume_consent=args.assume_consent,
     )
     server.run()  # stdio transport by default
 

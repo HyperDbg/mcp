@@ -10,13 +10,14 @@ from __future__ import annotations
 from functools import partial
 
 import anyio
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
-from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, require_confirmation
+from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, denial, require_confirmation
 
 
-def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
+def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
     # ----- SAFE reads (no target-controlled text -> no untrusted envelope) --- #
     @mcp.tool(name="hd_kernel_base", annotations=RO)
     def hd_kernel_base(ctx: Context) -> str:
@@ -71,9 +72,12 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
     # ----- GATED (consequential SDK ops; confirmed, not in read-only) ------ #
     async def _gated(ctx, *, what, audit, fn, ok):
         app = app_ctx(ctx)
-        if not await require_confirmation(ctx, what):
+        confirmed = await require_confirmation(ctx, what)
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record(audit, {}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         try:
             result = await anyio.to_thread.run_sync(fn)
         except HyperDbgError as exc:
@@ -83,53 +87,53 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
         return ok(result) if callable(ok) else ok
 
     @mcp.tool(name="hd_vmm_load", annotations=DESTRUCTIVE)
-    async def hd_vmm_load(ctx: Context) -> str:
+    async def hd_vmm_load(ctx: Context) -> str | InputRequiredResult:
         """Load the HyperDbg hypervisor (VMM). Ring-0; requires a DSE-off boot."""
         return await _gated(
             ctx,
             what="load the HyperDbg VMM (hypervisor)",
             audit="hd_vmm_load",
             fn=app_ctx(ctx).session.load_vmm,
-            ok=lambda rc: f"load_vmm rc={rc}",
+            ok="VMM loaded (kd driver installed).",
         )
 
     @mcp.tool(name="hd_vmm_unload", annotations=DESTRUCTIVE)
-    async def hd_vmm_unload(ctx: Context) -> str:
+    async def hd_vmm_unload(ctx: Context) -> str | InputRequiredResult:
         """Unload the HyperDbg hypervisor (VMM)."""
         return await _gated(
             ctx,
             what="unload the HyperDbg VMM",
             audit="hd_vmm_unload",
             fn=app_ctx(ctx).session.unload_vmm,
-            ok=lambda rc: f"unload_vmm rc={rc}",
+            ok="VMM and kd module unloaded.",
         )
 
     @mcp.tool(name="hd_modules_load_all", annotations=DESTRUCTIVE)
-    async def hd_modules_load_all(ctx: Context) -> str:
+    async def hd_modules_load_all(ctx: Context) -> str | InputRequiredResult:
         """Load all HyperDbg kernel modules."""
         return await _gated(
             ctx,
             what="load all HyperDbg modules",
             audit="hd_modules_load_all",
             fn=app_ctx(ctx).session.load_all_modules,
-            ok=lambda rc: f"load_all_modules rc={rc}",
+            ok="All modules loaded (kd driver installed).",
         )
 
     @mcp.tool(name="hd_modules_unload_all", annotations=DESTRUCTIVE)
-    async def hd_modules_unload_all(ctx: Context) -> str:
+    async def hd_modules_unload_all(ctx: Context) -> str | InputRequiredResult:
         """Unload all HyperDbg kernel modules."""
         return await _gated(
             ctx,
             what="unload all HyperDbg modules",
             audit="hd_modules_unload_all",
             fn=app_ctx(ctx).session.unload_all_modules,
-            ok=lambda rc: f"unload_all_modules rc={rc}",
+            ok="All modules unloaded.",
         )
 
     @mcp.tool(name="hd_transparent_enable", annotations=DESTRUCTIVE)
     async def hd_transparent_enable(
         ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1F
-    ) -> str:
+    ) -> str | InputRequiredResult:
         """Enable transparent mode to hide the debugger (evade_mask ALL=0x1F)."""
         return await _gated(
             ctx,
@@ -145,7 +149,7 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_transparent_disable", annotations=DESTRUCTIVE)
-    async def hd_transparent_disable(ctx: Context) -> str:
+    async def hd_transparent_disable(ctx: Context) -> str | InputRequiredResult:
         """Disable transparent mode (unhide the debugger)."""
         return await _gated(
             ctx,
@@ -156,7 +160,9 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_process_start", annotations=DESTRUCTIVE)
-    async def hd_process_start(path: str, ctx: Context, args: str = "") -> str:
+    async def hd_process_start(
+        path: str, ctx: Context, args: str = ""
+    ) -> str | InputRequiredResult:
         """Start a new process (optionally with args), breaking at its entry point."""
         return await _gated(
             ctx,
