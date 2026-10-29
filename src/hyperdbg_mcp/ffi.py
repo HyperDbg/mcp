@@ -267,8 +267,9 @@ def _configure(dll: CDLL) -> None:
     dll.hyperdbg_u_debug_close_remote_debugger.restype = c_ubyte
     dll.hyperdbg_u_debug_close_remote_debugger.argtypes = []
 
-    # Returns an unsigned status; OPERATION_WAS_SUCCESSFUL (0xFFFFFFFF) == success.
-    dll.hyperdbg_u_run_command.restype = c_uint32
+    # INT status: 0 on success, an 0xC0000xxx error code on failure (see
+    # session._is_error_status, which compares the low 32 bits).
+    dll.hyperdbg_u_run_command.restype = c_int
     dll.hyperdbg_u_run_command.argtypes = [c_char_p]
 
     dll.hyperdbg_u_set_text_message_callback.restype = None
