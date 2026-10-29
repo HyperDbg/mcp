@@ -70,15 +70,13 @@ def register_debugger(mcp: MCPServer, *, read_only: bool) -> None:
         return run_text(ctx, "flush", audit="hd_flush", kind="output")
 
     @mcp.tool(name="hd_settings", annotations=STATE)
-    def hd_settings(option: str = "", ctx: Context = None, value: str = "") -> str:
+    def hd_settings(option: str, ctx: Context, value: str = "") -> str:
         """Show or change a debugger setting.
 
         option: autounpause | autoflush | addressconversion (on/off), or syntax
-        (intel/att/masm, the disassembly syntax). Empty value shows the current one;
-        no option at all lists every setting.
+        (intel/att/masm, the disassembly syntax). Empty value shows the current one.
+        HyperDbg's settings command needs an option; there is no list-all form.
         """
-        if not option:
-            return run_text(ctx, "settings", audit="hd_settings", kind="settings", args={})
         allowed = _SETTINGS.get(option)
         if allowed is None:
             raise HyperDbgError(f"invalid option {option!r} (use {' | '.join(_SETTINGS)})")
