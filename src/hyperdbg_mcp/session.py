@@ -170,16 +170,29 @@ def _wait_for_pipe(named_pipe: str, timeout: float = 3.0) -> None:
 _ASYNC_ERRORS = ("err, there was an error transferring the message to the remote sources",)
 
 
+# libhyperdbg's ASSERT_MESSAGE_* (header/common/common.h): a command that needs
+# a module which is not loaded prints one of these and does nothing.
+_FAILURE_PREFIXES = (
+    "incorrect use of",
+    "err,",
+    "handle of the driver not found",
+    "the kd (kernel debugger) module is not loaded",
+    "the vmm (virtualization) module is not loaded",
+    "the trace (hypertrace) module is not loaded",
+)
+
+
 def _reports_failure(output: str) -> bool:
     """HyperDbg commands return success and print why they did nothing.
 
     Their first line is then `incorrect use of the '<cmd>'` (followed by the
-    help text) or `err, ...`. Only the first line counts: some commands print a
-    non-fatal `err,` between valid results (`!pcitree` without pci.ids).
+    help text), `err, ...` or that a needed module is not loaded. Only the
+    first line counts: some commands print a non-fatal `err,` between valid
+    results (`!pcitree` without pci.ids).
     """
     lines = (line.strip() for line in output.splitlines())
     first = next((ln for ln in lines if ln and not ln.startswith(_ASYNC_ERRORS)), "")
-    return first.startswith(("incorrect use of", "err,"))
+    return first.startswith(_FAILURE_PREFIXES)
 
 
 class HyperDbgSession:
@@ -494,6 +507,8 @@ class HyperDbgSession:
     def _module_op(self, what: str, *steps) -> None:
         """Run libhyperdbg module calls in order; each returns 0 on success, 1 on failure."""
         with self._lock:
+            # Before any connect too: the reason for a failure is only printed.
+            self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
             self._drain()
             for step in steps:
                 rc = int(step())
@@ -572,21 +587,36 @@ class HyperDbgSession:
     def enable_transparent_mode(
         self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1F
     ) -> None:
+        # libhyperdbg takes the name when the pid flag is off and strlen()s it:
+        # no name there is a NULL dereference in this process.
+        if bool(pid) == bool(name):
+            raise HyperDbgError("give exactly one of pid or name (the process to hide from)")
         self._require_connected()
         name_b = name.encode("utf-8") if name else None
         with self._lock:
+            self._drain()
             ok = self._dll.hyperdbg_u_enable_transparent_mode_ex(
                 c_uint32(pid), name_b, c_ubyte(1 if pid else 0), c_uint32(evade_mask)
             )
+            output = self._drain_settled() if not ok else ""
         if not ok:
-            raise HyperDbgError("enable_transparent_mode failed", status_code=ok)
+            raise self._failure("enable_transparent_mode failed", output)
 
     def disable_transparent_mode(self) -> None:
         self._require_connected()
         with self._lock:
+            self._drain()
             ok = self._dll.hyperdbg_u_disable_transparent_mode()
+            output = self._drain_settled() if not ok else ""
         if not ok:
-            raise HyperDbgError("disable_transparent_mode failed", status_code=ok)
+            raise self._failure("disable_transparent_mode failed", output)
+
+    @staticmethod
+    def _failure(message: str, output: str) -> HyperDbgError:
+        """A failed SDK call with HyperDbg's printed reason, fenced as target output."""
+        if output.strip():
+            message += "\n" + wrap_untrusted(output, "command-output")
+        return HyperDbgError(message)
 
     def start_process(self, path: str, args: str = "") -> None:
         self._require_connected()
@@ -604,10 +634,13 @@ class HyperDbgSession:
                 status_code=ok,
             )
 
-    def step_out(self, last_instruction: bool = False) -> None:
-        self._require_connected()
-        with self._lock:
-            self._dll.hyperdbg_u_stepping_step_over_for_gu(c_ubyte(1 if last_instruction else 0))
+    def step_out(self, max_steps: int = 0) -> str:
+        """Step until the current function returns (the CLI's `gu`).
+
+        hyperdbg_u_stepping_step_over_for_gu is only one step of that loop: the
+        CLI checks for `ret` after each step, which the SDK leaves to the caller.
+        """
+        return self.run_command("gu" + (f" {max_steps:x}" if max_steps else ""))
 
     def step_track(self) -> None:
         self._require_connected()
@@ -765,6 +798,12 @@ class HyperDbgSession:
         reg_id = ffi.REGS_ENUM.get(name.lower())
         if reg_id is None:
             raise HyperDbgError(f"unknown register {name!r}")
+        if self._mode == "local":
+            # hyperdbg_u_write_target_register only reaches a serial debuggee;
+            # the CLI's `r` sets a user-debugger thread's register through the
+            # script engine instead (`@reg=value;` run in the paused thread).
+            self.run_command(f"r {name.lower()} = {value:#x}")
+            return
         with self._lock:
             self._dll.hyperdbg_u_write_target_register(reg_id, value)
 
@@ -854,7 +893,13 @@ class HyperDbgSession:
         """Halt the debuggee and wait until libhyperdbg reports it halted."""
         if not self._connected:
             raise NotConnectedError("HyperDbg session is not connected")
-        if self._mode != "remote" or not self.is_running:
+        if self._mode == "local":
+            # Not under the lock: a user-debugger step or `gu` holds it while it
+            # waits for the thread to stop, and a pause is what releases that
+            # wait (libhyperdbg signals it on any halt), like the CLI's CTRL+C.
+            self._dll.hyperdbg_u_pause_debuggee()
+            return
+        if not self.is_running:
             with self._lock:
                 self._dll.hyperdbg_u_pause_debuggee()
             return

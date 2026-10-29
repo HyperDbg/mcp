@@ -166,6 +166,9 @@ class ModuleDll:
     def hyperdbg_u_connect_local_debugger(self):
         pass
 
+    def hyperdbg_u_pause_debuggee(self):
+        self.calls.append("pause")
+
 
 def test_load_vmm_installs_driver_first_and_reports_failure():
     ok = ModuleDll()
@@ -337,3 +340,33 @@ def test_local_memory_access_defaults_to_own_process():
     session.write_memory_bytes(0xFFFFF80000000000, b"\x90")
     session.read_memory(0x1000, 1, pid=4)
     assert dll.pids == [os.getpid(), os.getpid(), 4]
+
+
+@pytest.mark.parametrize(("pid", "name"), [(0, ""), (0x1234, "ping.exe")])
+def test_transparent_mode_needs_exactly_one_target(pid, name):
+    # libhyperdbg strlen()s a NULL name when there is no pid: refuse before the call
+    with pytest.raises(HyperDbgError, match="exactly one of pid or name"):
+        HyperDbgSession(dll=ModuleDll()).enable_transparent_mode(pid=pid, name=name)
+
+
+def test_local_pause_does_not_wait_for_a_blocked_step():
+    # A user-debugger step holds the session lock while it waits for the thread;
+    # only a pause releases that wait, so the pause must not queue behind it.
+    s = HyperDbgSession(dll=ModuleDll())
+    s.connect_local()
+    with s._lock:
+        t = threading.Thread(target=s.pause_debuggee)
+        t.start()
+        t.join(2.0)
+        assert not t.is_alive()
+
+
+def test_local_register_write_goes_through_the_r_command():
+    # the SDK export only reaches a serial debuggee; locally the CLI's `r` works
+    dll = ModuleDll()
+    dll.commands = []
+    dll.hyperdbg_u_run_command = lambda cmd: dll.commands.append(cmd) or 0
+    s = HyperDbgSession(dll=dll)
+    s.connect_local()
+    s.write_register("R12", 0x1)
+    assert dll.commands == [b"r r12 = 0x1"]

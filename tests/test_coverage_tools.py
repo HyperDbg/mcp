@@ -55,7 +55,6 @@ _CASES = [
     ("hd_lbr_filter", {"exclude": ["kernel", "jcc"]}, "!lbr filter kernel jcc"),
     ("hd_lbr_filter", {}, "!lbr filter"),
     ("hd_lbr_dump", {"core": 1}, "!lbrdump core 0x1"),
-    ("hd_rev", {"mode": "pattern", "pid": 0x1C0}, "!rev pattern pid 0x1c0"),
     ("hd_mem_dump",
      {"from_address": "0x401000", "to_address": "0x40b000", "path": "c:/rev/a b.dmp"},
      '.dump 0x401000 0x40b000 path "c:/rev/a b.dmp"'),
@@ -75,7 +74,6 @@ _CASES = [
     ("hd_flush", {}, "flush"),
     ("hd_settings", {"option": "syntax", "value": "att"}, "settings syntax att"),
     ("hd_settings", {"option": "autoflush"}, "settings autoflush"),
-    ("hd_measure", {"default": True}, "!measure default"),
     ("hd_cpuid", {"opcode": 4, "subfunction": 2}, "ucpuid 0x4 0x2"),
     ("hd_msr_read", {"msr_id": "0xC0000082", "core": 2}, "rdmsr 0xc0000082 core 0x2"),
     ("hd_msr_write", {"msr_id": "0xC0000103", "value": "0x5", "core": 0},
@@ -160,7 +158,7 @@ async def test_read_only_exposes_only_safe_coverage_tools(tmp_path):
             "hd_hook_mode", "hd_hook_trace", "hd_hook_crwrite", "hd_hook_xsetbv",
             "hd_prealloc", "hd_preactivate", "hd_user_thread_switch", "hd_pt_enable",
             "hd_pt_control", "hd_pt_filter", "hd_pt_packets", "hd_lbr", "hd_lbr_filter",
-            "hd_rev", "hd_mem_dump", "hd_io_in", "hd_io_out", "hd_output_create",
-            "hd_output", "hd_measure",
+            "hd_mem_dump", "hd_io_in", "hd_io_out", "hd_output_create",
+            "hd_output",
         }
     )

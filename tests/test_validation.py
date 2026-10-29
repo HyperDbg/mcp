@@ -256,6 +256,7 @@ async def test_eval_never_reaches_the_engine_with_a_write(tmp_path):
         ("\nerr, listing breakpoints is only valid in debugger-mode\n", True),
         ("DBDF | VID:DID\nerr, cannot open file 'pci.ids'\n0000:00:00:0 | 8086:a707", False),
         ("core : 0x0 - msr[c0000082] = fffff800`df2c1840", False),
+        ("the trace (hypertrace) module is not loaded. Did you use 'load trace' command?", True),
         # an event's failed output source, printed while this command ran
         ("err, there was an error transferring the message to the remote sources\n", False),
         (

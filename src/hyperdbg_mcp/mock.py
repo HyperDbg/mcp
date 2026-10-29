@@ -165,8 +165,8 @@ class MockSession:
     def start_process(self, path: str, args: str = "") -> None:
         return None
 
-    def step_out(self, last_instruction: bool = False) -> None:
-        return None
+    def step_out(self, max_steps: int = 0) -> str:
+        return ""
 
     def step_track(self) -> None:
         return None

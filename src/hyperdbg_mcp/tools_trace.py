@@ -1,8 +1,8 @@
 """
 * @file tools_trace.py
 * @author munraimix
-* @brief Hardware tracing tools: Intel Processor Trace (!pt), Last Branch Record
-*        (!lbr, !lbrdump) and the reversing machine (!rev).
+* @brief Hardware tracing tools: Intel Processor Trace (!pt) and Last Branch
+*        Record (!lbr, !lbrdump). Both need the trace module (hd_modules_load_all).
 * @copyright This project is released under the GNU Public License v3.
 """
 
@@ -34,7 +34,6 @@ _LBR_FILTERS = {
     "other_branches",
     "call_stack",
 }
-_REV_MODES = {"pattern": "pattern", "reconstruct": "reconstruct"}
 _RANGE = re.compile(r"\s*(\S+)\s*-\s*(\S+)\s*")
 
 
@@ -89,6 +88,9 @@ def register_trace(mcp: MCPServer, *, read_only: bool) -> None:
         core: int = -1,
     ) -> str | InputRequiredResult:
         """Start Intel Processor Trace, optionally for one process/thread/CR3.
+
+        Needs the trace module: load it with hd_modules_load_all. The trace
+        thread keeps printing (decoding, exit) into later tools' output.
 
         Give at most one of pid, tid, process_name, cr3. buffer_size is per core
         (bytes); core limits tracing to one core.
@@ -179,7 +181,10 @@ def register_trace(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_lbr", annotations=DESTRUCTIVE)
     async def hd_lbr(action: str, ctx: Context) -> str | InputRequiredResult:
-        """Last Branch Record: enable | disable | flush (read it with hd_lbr_dump)."""
+        """Last Branch Record: enable | disable | flush (read it with hd_lbr_dump).
+
+        Needs the trace module: load it with hd_modules_load_all.
+        """
         cmd = f"!lbr {choose(action, _LBR_ACTIONS, 'action')}"
         return await run_text_confirmed(
             ctx,
@@ -210,17 +215,4 @@ def register_trace(mcp: MCPServer, *, read_only: bool) -> None:
             audit="hd_lbr_filter",
             kind="trace",
             args={"exclude": exclude},
-        )
-
-    @mcp.tool(name="hd_rev", annotations=DESTRUCTIVE)
-    async def hd_rev(mode: str, ctx: Context, pid: int = 0) -> str | InputRequiredResult:
-        """Run the reversing machine on a process: pattern | reconstruct."""
-        cmd = f"!rev {choose(mode, _REV_MODES, 'mode')}" + (f" pid {pid:#x}" if pid else "")
-        return await run_text_confirmed(
-            ctx,
-            cmd,
-            what=f"reversing machine: {cmd}",
-            audit="hd_rev",
-            kind="trace",
-            args={"mode": mode, "pid": pid},
         )

@@ -14,6 +14,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
+from .safety import wrap_untrusted
 from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, denial, require_confirmation
 
 
@@ -51,12 +52,17 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
 
     # ----- navigation (execution control; allowed in read-only) ------------ #
     @mcp.tool(name="hd_step_out", annotations=STATE)
-    def hd_step_out(ctx: Context, last_instruction: bool = False) -> str:
-        """Run until the current function returns (gu / go-up)."""
+    def hd_step_out(ctx: Context, max_steps: int = 0) -> str:
+        """Step until the current function returns (gu / go-up).
+
+        Steps over calls; stops after the `ret`, or after max_steps steps
+        (0 = HyperDbg's default). If the thread never gets there (it blocks or
+        exits), hd_exec_pause interrupts the wait.
+        """
         app = app_ctx(ctx)
-        app.session.step_out(last_instruction)
-        app.audit.record("hd_step_out", {}, status="ok")
-        return "Stepped out."
+        out = app.session.step_out(max_steps)
+        app.audit.record("hd_step_out", {"max_steps": max_steps}, status="ok")
+        return wrap_untrusted(out, "step") if out.strip() else "Stepped out."
 
     @mcp.tool(name="hd_step_track", annotations=STATE)
     def hd_step_track(ctx: Context) -> str:
@@ -138,7 +144,12 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
     async def hd_transparent_enable(
         ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1F
     ) -> str | InputRequiredResult:
-        """Enable transparent mode to hide the debugger (evade_mask ALL=0x1F)."""
+        """Enable transparent mode: hide the debugger from one process.
+
+        Give exactly one of pid or name (case-sensitive image name, e.g.
+        "procexp.exe"); call again to hide from more processes. evade_mask
+        selects the techniques (ALL=0x1F).
+        """
         return await _gated(
             ctx,
             what="enable transparent (anti-detection) mode",

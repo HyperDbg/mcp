@@ -116,19 +116,3 @@ def register_debugger(mcp: MCPServer, *, read_only: bool) -> None:
             kind="output",
             args={"action": action, "name": name},
         )
-
-    @mcp.tool(name="hd_measure", annotations=DESTRUCTIVE)
-    async def hd_measure(ctx: Context, default: bool = False) -> str | InputRequiredResult:
-        """Measure VM-exit timing for transparent mode (run before hd_transparent_enable).
-
-        default=True uses HyperDbg's built-in values instead of measuring.
-        """
-        cmd = "!measure" + (" default" if default else "")
-        return await run_text_confirmed(
-            ctx,
-            cmd,
-            what=f"run {cmd}",
-            audit="hd_measure",
-            kind="system",
-            args={"default": default},
-        )
