@@ -109,12 +109,18 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
         handshake. "never" always handshakes.
         """
         a = app_ctx(ctx)
+        # Validate the arguments first: "already connected" would hide a typo in
+        # the transport name until the operator disconnects.
+        if transport not in _TRANSPORTS:
+            raise HyperDbgError(
+                f"connect failed: unknown transport {transport!r} (use one of {_TRANSPORTS})"
+            )
+        mode = choose(reattach, _REATTACH, "reattach")
         if a.session.is_connected:
             return f"already connected ({a.session.mode}); hd_disconnect first"
         if getattr(a.session, "is_connecting", False):
             return "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
         wait = float(max(1, min(wait_seconds, 50)))  # stay under clients' ~60 s tool timeout
-        mode = choose(reattach, _REATTACH, "reattach")
         try:
             done = await anyio.to_thread.run_sync(
                 _do_connect,

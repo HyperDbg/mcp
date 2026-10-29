@@ -167,10 +167,17 @@ def host_path(path: str, name: str = "path") -> str:
 _NAME = re.compile(r"[A-Za-z_][\w]*")
 
 
+_OUTPUT_NAME = re.compile(r"[A-Za-z0-9_.\-]+")
+
+
 def output_names(value: str) -> str:
-    """Validate a comma-separated list of output source names (`output` command)."""
+    """Validate a comma-separated list of output source names (`output` command).
+
+    HyperDbg only splits the command line on whitespace, so a name may contain
+    dashes and dots as well.
+    """
     names = [n.strip() for n in value.split(",")]
-    if not all(_NAME.fullmatch(n) for n in names):
+    if not all(_OUTPUT_NAME.fullmatch(n) for n in names):
         raise HyperDbgError(f"invalid output name(s) {value!r} (identifiers, comma-separated)")
     return ", ".join(names)
 

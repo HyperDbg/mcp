@@ -180,10 +180,23 @@ _ASYNC_ERRORS = ("err, there was an error transferring the message to the remote
 _FAILURE_PREFIXES = (
     "incorrect use of",
     "err,",
+    "please specify",
+    "please choose",
+    "please enter",
+    "couldn't resolve",
+    "unknown parameter",
+    "unable to attach",
     "handle of the driver not found",
     "the kd (kernel debugger) module is not loaded",
     "the vmm (virtualization) module is not loaded",
     "the trace (hypertrace) module is not loaded",
+)
+
+# HyperDbg also refuses by *explaining* that it did nothing while returning
+# success ("the .pagein command can be used ONLY in the debugger mode").
+_FAILURE_MARKERS = (
+    "can be used only in the debugger mode",
+    "is not yet supported in vmi mode",
 )
 
 
@@ -197,7 +210,10 @@ def _reports_failure(output: str) -> bool:
     """
     lines = (line.strip() for line in output.splitlines())
     first = next((ln for ln in lines if ln and not ln.startswith(_ASYNC_ERRORS)), "")
-    return first.startswith(_FAILURE_PREFIXES)
+    if first.startswith(_FAILURE_PREFIXES):
+        return True
+    low = first.lower()
+    return any(marker in low for marker in _FAILURE_MARKERS)
 
 
 _FAILURE_HINTS = (
@@ -213,6 +229,12 @@ _FAILURE_HINTS = (
         "only valid if you connected to a debuggee in debugger-mode",
         "This command needs Debugger Mode (serial/pipe/net). Set the same event with "
         "the VMI-mode equivalents: hd_hook_ept2 instead of hd_bp_set, hd_hook_monitor, ...",
+    ),
+    (
+        "breaking to the debugger is not possible",
+        "In VMI mode an event must carry a script: HyperDbg's default action is to break "
+        "into the debugger, which VMI cannot do. Pass script: 'printf(\"hit\\n\");' (or "
+        "use Debugger Mode).",
     ),
     (
         "not yet supported in vmi mode",
@@ -478,6 +500,12 @@ class HyperDbgSession:
         is fenced like any other untrusted output.
         """
         output = self._drain_settled()
+        if "unable to attach to the target process" in output:
+            # Only one user-mode debuggee can be attached at a time.
+            hint = (
+                "a user-mode debuggee is already attached: hd_process_kill or "
+                "hd_process_detach first"
+            )
         if "already connected to remote machine" in output:
             # libhyperdbg in *this* process is still attached, e.g. an earlier
             # connect that completed after its tool call was given up on.
@@ -978,6 +1006,13 @@ class HyperDbgSession:
 
     def set_breakpoint(self, address: int, *, pid: int = 0, tid: int = 0, core: int = 0) -> None:
         self._require_connected()
+        if self._mode == "local":
+            # The SDK export needs a debuggee attached the Debugger-Mode way; in
+            # VMI mode HyperDbg answers "bl" with the same explanation.
+            raise PreconditionError(
+                "software breakpoints need Debugger Mode: in VMI mode use an EPT hook "
+                "instead (hd_hook_ept2 on the code address, hd_hook_monitor on the data)"
+            )
         with self._ops():
             self._dll.hyperdbg_u_set_breakpoint(address, pid, tid, core)
 
