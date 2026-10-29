@@ -138,6 +138,24 @@ pytest
 ruff check .
 ```
 
+### Live cases (whole tool surface, real HyperDbg host)
+
+`scripts/live_cases.py` drives a running server over Streamable HTTP: one case per
+tool plus the validation and idempotency cases a session needs, in phases
+(`cold` / `load` / `read` / `events` / `write` / `umd` / `neg` / `cleanup`), each
+phase setting up the preconditions it needs. `expect` is `ok`, `error` or `any`
+(machine-dependent: no trace module, Debugger-Mode-only feature) and can require a
+substring, so a failure means the tool changed, not the machine.
+
+```bash
+python scripts/live_cases.py --config client/.http.json --report /tmp/live.json
+python scripts/live_cases.py --phase read --only mem          # a slice
+python scripts/live_cases.py --dangerous                      # adds the MSR write
+```
+
+The write cases echo back the value they read (a wrong MSR write, e.g. LSTAR=0,
+bugchecks the machine); `--dangerous` opts into the MSR one.
+
 ## Roadmap
 
 - Validate Debugger Mode (serial / pipe / net) end-to-end against v0.25.0.

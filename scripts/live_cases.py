@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import sys
 import time
 from dataclasses import dataclass, field
@@ -325,10 +326,14 @@ async def run(args) -> int:
                                 call_args["value"] = "0x" + digits[-1] if digits else "0x0"
                             else:
                                 _, cur = await call(session, "hd_mem_read", {"address": call_args["address"], "size": 8}, args.timeout)
-                                start = cur.find("hex")
-                                hexstr = cur[start:start + 200].split(chr(34))[3] if start >= 0 else ""
-                                hexstr = "".join(ch for ch in hexstr if ch in "0123456789abcdefABCDEF")
-                                call_args["data_hex"] = hexstr[:16] or "0"
+                                found = re.search(r'"hex":\s*"([0-9a-fA-F]+)"', cur)
+                                if not found:
+                                    run = re.findall(r"[0-9a-fA-F]{16,}", cur)
+                                    found = None
+                                    hexstr = run[-1] if run else ""
+                                else:
+                                    hexstr = found.group(1)
+                                call_args["data_hex"] = hexstr[:16]
                         except Exception as exc:  # noqa: BLE001
                             results.append(Result(case, "SKIP", f"echo failed: {exc}"))
                             continue
