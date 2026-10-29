@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import faulthandler
+import logging
 import os
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -95,6 +98,7 @@ def build_server(
                 assume_consent=assume_consent,
             )
         finally:
+            logging.getLogger(__name__).info("server shutting down: closing the session")
             atexit.unregister(session.close)
             session.close()
 
@@ -103,6 +107,25 @@ def build_server(
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)
     return mcp
+
+
+def _log_to_file(path: str, *, stdout_too: bool) -> None:
+    """Send everything the process prints to `path`.
+
+    Under a service or scheduled task nobody reads the console, and HyperDbg
+    writes to it directly (C stdio), so redirect the file descriptors, not just
+    sys.stderr. stdout is the protocol channel under stdio: leave it alone there.
+    """
+    log = open(path, "a", buffering=1, encoding="utf-8", errors="replace")  # noqa: SIM115
+    os.dup2(log.fileno(), 2)
+    if stdout_too:
+        os.dup2(log.fileno(), 1)
+    sys.stderr = log
+    faulthandler.enable(log)  # native crashes (access violations) get a traceback
+    logging.basicConfig(
+        stream=log, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    logging.getLogger(__name__).info("hyperdbg-mcp starting (pid %d)", os.getpid())
 
 
 def _load(lib_path: str):
@@ -176,11 +199,19 @@ def main() -> None:
     parser.add_argument("--remote-pipe", default=None, help="Connect over a named pipe.")
     parser.add_argument("--remote-net", default=None, help="Connect over TCP as IP:PORT.")
     parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Append logs, tracebacks and HyperDbg's own console output to this file "
+        "(stderr, and stdout too for --transport http).",
+    )
+    parser.add_argument(
         "--no-pause",
         action="store_true",
         help="Do not halt the debuggee on connect (default: pause for a valid CPU context).",
     )
     args = parser.parse_args()
+    if args.log_file:
+        _log_to_file(args.log_file, stdout_too=args.transport == "http")
 
     session_factory = None
     if args.mock:

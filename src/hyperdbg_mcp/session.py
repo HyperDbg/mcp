@@ -453,6 +453,7 @@ class HyperDbgSession:
         """Best-effort unload of what a local session loaded, so the process can exit."""
         try:
             if self._dll.hyperdbg_u_is_any_module_loaded():
+                _log.info("session closing: unloading the VMM and kd driver")
                 self._dll.hyperdbg_u_unload_vmm()  # 1 if no VMM: fine
                 self._dll.hyperdbg_u_unload_kd()
         except Exception:  # pragma: no cover - best-effort; fake dlls lack them
@@ -571,12 +572,18 @@ class HyperDbgSession:
     def start_process(self, path: str, args: str = "") -> None:
         self._require_connected()
         with self._lock:
+            self._drain()
             if args:
                 ok = self._dll.hyperdbg_u_start_process_with_args(path, args)
             else:
                 ok = self._dll.hyperdbg_u_start_process(path)
+            output = self._drain_settled() if not ok else ""
         if not ok:
-            raise HyperDbgError(f"start_process({path!r}) failed", status_code=ok)
+            raise HyperDbgError(
+                f"start_process({path!r}) failed"
+                + (("\n" + wrap_untrusted(output, "command-output")) if output.strip() else ""),
+                status_code=ok,
+            )
 
     def step_out(self, last_instruction: bool = False) -> None:
         self._require_connected()

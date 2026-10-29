@@ -80,9 +80,9 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             return denial(ctx)
         try:
             result = await anyio.to_thread.run_sync(fn)
-        except HyperDbgError as exc:
+        except HyperDbgError:
             app.audit.record(audit, {}, status="error")
-            return str(exc)
+            raise
         app.audit.record(audit, {}, status="ok")
         return ok(result) if callable(ok) else ok
 

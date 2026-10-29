@@ -42,7 +42,8 @@ SSH tunnel rather than binding a LAN address:
 ```powershell
 # Windows host, as Administrator: token file readable by Administrators only
 scripts\windows\start-http.ps1 -TokenFile C:\ProgramData\hyperdbg-mcp\token `
-    --lib-path C:\HyperDbg\libhyperdbg.dll --audit-log C:\ProgramData\hyperdbg-mcp\audit.jsonl
+    --lib-path C:\HyperDbg\libhyperdbg.dll --audit-log C:\ProgramData\hyperdbg-mcp\audit.jsonl `
+    --log-file C:\ProgramData\hyperdbg-mcp\server.log
 ```
 
 ```bash
@@ -52,7 +53,9 @@ ssh -N -L 8765:127.0.0.1:8765 user@windows-host
 ```
 
 Start it from a scheduled task (or another service host) rather than an SSH session:
-Windows' sshd ends every process of a session when the session closes.
+Windows' sshd ends every process of a session when the session closes. Nobody sees that
+console, so pass `--log-file`: it collects the server's logs, Python tracebacks and what
+HyperDbg itself prints (driver-load errors, missing DLLs).
 
 ## Safety
 

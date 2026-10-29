@@ -96,3 +96,20 @@ async def test_debugger_session_outlives_client_reconnects(http_server):
 def test_http_mode_refuses_to_start_without_a_real_token(token):
     with pytest.raises(SystemExit):
         check_token(token)
+
+
+def test_log_file_captures_native_output(tmp_path):
+    # Run in a child: the option redirects the process's own fds.
+    import subprocess
+    import sys
+
+    log = tmp_path / "server.log"
+    code = (
+        "import os, sys; from hyperdbg_mcp.server import _log_to_file; "
+        f"_log_to_file({str(log)!r}, stdout_too=True); "
+        "os.write(1, b'native stdout\\n'); os.write(2, b'native stderr\\n')"
+    )
+    subprocess.run([sys.executable, "-c", code], check=True)
+    text = log.read_text()
+    assert "hyperdbg-mcp starting" in text
+    assert "native stdout" in text and "native stderr" in text
