@@ -13,7 +13,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
-from .toolkit import DESTRUCTIVE, RO, choose, hex_values, parse_addr, run_text, run_text_confirmed
+from .toolkit import DESTRUCTIVE, RO, choose, hex_values, resolve_addr, run_text, run_text_confirmed
 
 _DISPLAY = {
     "byte": "db",
@@ -45,7 +45,7 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
         fmt: byte|word|dword|qword|char|ascii, or dword_sym|qword_sym|ptr_sym to
         resolve each value to a symbol (dds/dqs/dps - the way to read a stack).
         """
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         base = choose(fmt, _DISPLAY, "fmt")
         if physical:
             base = "!" + base
@@ -67,7 +67,7 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
         physical: bool = False,
     ) -> str:
         """Search memory for `value` from `address` (hex string; fmt: byte|dword|qword)."""
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         base = choose(fmt, _SEARCH, "fmt")
         if physical:
             base = "!" + base
@@ -97,7 +97,7 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
         physical: bool = False,
     ) -> str | InputRequiredResult:
         """Edit debuggee memory at address (hex string; fmt: byte|dword|qword)."""
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         base = choose(fmt, _EDIT, "fmt")
         if physical:
             base = "!" + base
@@ -123,7 +123,7 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
         """
         if not re.fullmatch(r"[pwuf]{0,4}", mode) or len(set(mode)) != len(mode):
             raise HyperDbgError(f"invalid mode {mode!r} (letters from p, w, u, f, each once)")
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         cmd = ".pagein" + (f" {mode}" if mode else "") + f" {addr:#x}"
         if length:
             cmd += f" l {length:#x}"

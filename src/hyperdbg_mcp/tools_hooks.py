@@ -18,6 +18,7 @@ from .toolkit import (
     bracket_body,
     choose,
     parse_addr,
+    resolve_addr,
     run_text,
     run_text_confirmed,
 )
@@ -72,7 +73,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Set EPT (Extended Page Tables) hook at address (hex string)."""
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         cmd = f"!epthook {addr:#x}" + _suffix(pid, core, script, stage, short_circuit)
         return await run_text_confirmed(
             ctx,
@@ -94,7 +95,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Set EPT2 (Extended Page Tables 2) hook at address (hex string)."""
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         cmd = f"!epthook2 {addr:#x}" + _suffix(pid, core, script, stage, short_circuit)
         return await run_text_confirmed(
             ctx,
@@ -118,8 +119,8 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Monitor r|w|x|rw|rx|wx|rwx accesses to an address range (hex strings)."""
-        frm = parse_addr(from_address)
-        to = parse_addr(to_address)
+        frm = resolve_addr(ctx, from_address)
+        to = resolve_addr(ctx, to_address)
         attr = choose(attribute, _MONITOR_ATTRS, "attribute")
         cmd = f"!monitor {attr} {frm:#x} {to:#x}" + _suffix(pid, core, script, stage, short_circuit)
         return await run_text_confirmed(

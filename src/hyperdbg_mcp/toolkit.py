@@ -72,6 +72,25 @@ def parse_addr(value: str | int) -> int:
         ) from exc
 
 
+# `nt!KdDebuggerEnabled`, `nt!PsLoadedModuleList+0x10`, `@rip-8`: a symbol or
+# register plus hex offsets, nothing else. HyperDbg evaluates addresses with its
+# script engine, which also has side-effecting functions (eb/ed/eq...), so only
+# this read-only shape is ever handed to it.
+_SYMBOLIC_ADDR = re.compile(
+    r"(?:[A-Za-z_][\w.]*!)?[A-Za-z_@$][\w@$.]*(?:\s*[+-]\s*(?:0x)?[0-9a-fA-F`]+)*"
+)
+
+
+def resolve_addr(ctx: Context, value: str | int) -> int:
+    """parse_addr, plus symbolic addresses resolved through HyperDbg's symbols."""
+    try:
+        return parse_addr(value)
+    except HyperDbgError:
+        if not isinstance(value, str) or not _SYMBOLIC_ADDR.fullmatch(value.strip()):
+            raise
+    return app_ctx(ctx).session.eval_expression(value.strip())
+
+
 def choose(value: str, allowed: dict[str, str], name: str) -> str:
     """Map a user-facing choice to its CLI token; reject unknown values loudly."""
     try:

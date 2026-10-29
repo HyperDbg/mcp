@@ -132,3 +132,53 @@ async def test_hook_confirmation_shows_full_command(tmp_path):
         )
     assert "script { eb(@rcx, 0x90); }" in seen[0] and "stage post" in seen[0]
     assert session.commands == ["!epthook 0x1000 stage post script { eb(@rcx, 0x90); }"]
+
+
+class SymbolSession(RecordingSession):
+    def __init__(self):
+        super().__init__()
+        self.evaluated: list[str] = []
+        self.reads: list[int] = []
+
+    def eval_expression(self, expr):
+        self.evaluated.append(expr)
+        return 0xFFFFF80279C00000
+
+    def read_memory(self, address, size, *, pid=0, virtual=True):
+        self.reads.append(address)
+        return b"\x00" * size
+
+
+@pytest.mark.parametrize(
+    "address", ["nt!KdDebuggerEnabled", "nt!PsLoadedModuleList + 0x8", "@rip-10"]
+)
+async def test_mem_read_resolves_symbolic_addresses(tmp_path, address):
+    session = SymbolSession()
+    srv = server.build_server(
+        read_only=True,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+    )
+    async with Client(srv) as client:
+        result = await client.call_tool("hd_mem_read", {"address": address, "size": 1})
+    assert not result.is_error, _text(result)
+    assert session.evaluated == [address] and session.reads == [0xFFFFF80279C00000]
+
+
+@pytest.mark.parametrize(
+    "address", ["eq(nt!KdDebuggerEnabled, 1)", "nt!X; eb(0, 1)", "poi(nt!X)", "1 + 2"]
+)
+async def test_mem_read_never_evaluates_arbitrary_script(tmp_path, address):
+    # The script engine can write memory: only symbol(+offset) reaches it.
+    session = SymbolSession()
+    srv = server.build_server(
+        read_only=True,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+    )
+    async with Client(srv) as client:
+        result = await client.call_tool("hd_mem_read", {"address": address, "size": 1})
+    assert result.is_error and "invalid address" in _text(result)
+    assert session.evaluated == [] and session.reads == []

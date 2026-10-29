@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from .toolkit import RO, app_ctx, parse_addr, run_text
+from .toolkit import RO, app_ctx, resolve_addr, run_text
 
 
 def register_hw(mcp: MCPServer, *, read_only: bool) -> None:
@@ -22,7 +22,7 @@ def register_hw(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_assemble(assembly: str, ctx: Context, address: str = "0") -> str:
         """Assemble x86-64 instruction(s) at `address` (hex string) to machine-code hex."""
         app = app_ctx(ctx)
-        data = app.session.assemble(assembly, parse_addr(address))
+        data = app.session.assemble(assembly, resolve_addr(ctx, address))
         app.audit.record("hd_assemble", {"assembly": assembly}, status="ok")
         return data.hex()
 

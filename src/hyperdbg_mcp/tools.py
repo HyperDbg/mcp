@@ -28,7 +28,7 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import choose, parse_addr, require_confirmation
+from .toolkit import choose, parse_addr, require_confirmation, resolve_addr
 
 if TYPE_CHECKING:  # pragma: no cover
     from mcp.server.mcpserver import MCPServer
@@ -64,9 +64,13 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_mem_read(
         address: str, size: int, ctx: Context, pid: int = 0, virtual: bool = True
     ) -> MemoryDump:
-        """Read `size` bytes of debuggee memory from `address` (hex string, e.g. 0xfffff800...)."""
+        """Read `size` bytes of debuggee memory from `address`.
+
+        `address` is hex/decimal (0xfffff800...) or a symbol such as
+        `nt!KdDebuggerEnabled` or `nt!PsLoadedModuleList+0x8` (needs symbols).
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         data = app.session.read_memory(addr, size, pid=pid, virtual=virtual)
         app.audit.record(
             "hd_mem_read", {"address": hex(addr), "size": size}, status="ok", target_pid=pid
@@ -101,12 +105,12 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_disasm", annotations=_RO)
     def hd_disasm(address: str, ctx: Context, count: int = 16, bits: int = 64) -> str:
-        """Disassemble up to `count` instructions at `address` (hex string; read-only).
+        """Disassemble up to `count` instructions at `address` (hex or symbol; read-only).
 
         bits=32 decodes x86 (WoW64 / 32-bit) code instead of x64.
         """
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         count = max(1, min(count, _MAX_DISASM))
         cmd = choose(str(bits), {"64": "u", "32": "u32"}, "bits")
         out = app.session.run_command(f"{cmd} {hex(addr)} l {count:x}")
@@ -186,7 +190,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_bp_set(address: str, ctx: Context, pid: int = 0, tid: int = 0, core: int = 0) -> str:
         """Set a breakpoint at `address` (hex string; patches the target; full mode only)."""
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         app.session.set_breakpoint(addr, pid=pid, tid=tid, core=core)
         app.audit.record("hd_bp_set", {"address": hex(addr)}, status="ok", target_pid=pid)
         return f"Breakpoint set at {hex(addr)}."
@@ -197,7 +201,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str | InputRequiredResult:
         """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string)."""
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         payload = bytes.fromhex(data_hex)
         confirmed = await require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}")
         if isinstance(confirmed, InputRequiredResult):

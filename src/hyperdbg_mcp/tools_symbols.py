@@ -10,7 +10,7 @@ from __future__ import annotations
 from mcp.server.mcpserver import Context, MCPServer
 
 from .errors import HyperDbgError
-from .toolkit import RO, STATE, parse_addr, run_text, token
+from .toolkit import RO, STATE, resolve_addr, run_text, token
 
 
 def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
@@ -24,7 +24,7 @@ def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
     def hd_struct_display(type_name: str, ctx: Context, address: str = "0", pid: int = 0) -> str:
         """Display struct type definition, optionally at `address` (hex string)."""
         cmd = f"dt {token(type_name, 'type_name')}"
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         if addr:
             cmd += f" {addr:#x}"
         if pid:

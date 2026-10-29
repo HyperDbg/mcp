@@ -9,14 +9,14 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from .toolkit import RO, choose, parse_addr, run_text
+from .toolkit import RO, choose, parse_addr, resolve_addr, run_text
 
 
 def register_paging(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_va2pa", annotations=RO)
     def hd_va2pa(virtual_address: str, ctx: Context, pid: int = 0) -> str:
         """Convert virtual address (hex string) to physical address."""
-        va = parse_addr(virtual_address)
+        va = resolve_addr(ctx, virtual_address)
         cmd = f"!va2pa {va:#x}"
         if pid:
             cmd += f" pid {pid:#x}"
@@ -34,7 +34,7 @@ def register_paging(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_pte", annotations=RO)
     def hd_pte(virtual_address: str, ctx: Context, pid: int = 0) -> str:
         """Display page table entry for virtual address (hex string)."""
-        va = parse_addr(virtual_address)
+        va = resolve_addr(ctx, virtual_address)
         cmd = f"!pte {va:#x}"
         if pid:
             cmd += f" pid {pid:#x}"
