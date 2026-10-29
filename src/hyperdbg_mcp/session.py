@@ -971,7 +971,19 @@ class HyperDbgSession:
         if fn is None:
             raise HyperDbgError(f"unknown step mode {mode!r} (use over|in|instr)")
         with self._ops():
-            fn()
+            self._drain()
+            try:
+                fn()
+            except HyperDbgError as exc:
+                # libhyperdbg prints the reason it refused ("the debuggee process
+                # is not alive anymore", no halted context) instead of returning
+                # it, and the caller needs that far more than "returned FALSE".
+                output = self._drain_settled()
+                if output.strip():
+                    raise HyperDbgError(
+                        f"{exc}\n" + wrap_untrusted(output, "step-output")
+                    ) from None
+                raise
 
     def eval_expression(self, expr: str) -> int:
         self._require_connected()
