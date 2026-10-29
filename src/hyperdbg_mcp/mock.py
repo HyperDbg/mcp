@@ -135,13 +135,15 @@ class MockSession:
         return True
 
     def load_vmm(self) -> None:
-        return None
+        if not self.connected:
+            self.connect_local()
 
     def unload_vmm(self) -> None:
         return None
 
     def load_all_modules(self) -> None:
-        return None
+        if not self.connected:
+            self.connect_local()
 
     def unload_all_modules(self) -> None:
         return None

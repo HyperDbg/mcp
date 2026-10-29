@@ -169,8 +169,11 @@ class ModuleDll:
 
 def test_load_vmm_installs_driver_first_and_reports_failure():
     ok = ModuleDll()
-    HyperDbgSession(dll=ok).load_vmm()
+    session = HyperDbgSession(dll=ok)
+    session.load_vmm()
     assert ok.calls == ["install", "load_vmm"]  # like the CLI's `load vmm`
+    # the VMM now runs here: the session debugs this machine
+    assert session.is_connected and session.mode == "local"
 
     bad = ModuleDll(install_rc=1)
     with pytest.raises(HyperDbgError, match=r"load vmm failed \(rc=1\)"):

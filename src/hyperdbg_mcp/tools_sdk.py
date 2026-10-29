@@ -88,13 +88,17 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_vmm_load", annotations=DESTRUCTIVE)
     async def hd_vmm_load(ctx: Context) -> str | InputRequiredResult:
-        """Load the HyperDbg hypervisor (VMM). Ring-0; requires a DSE-off boot."""
+        """Load the HyperDbg hypervisor (VMM) and debug this machine (local VMI mode).
+
+        Ring-0; requires a DSE-off boot. Debugger Mode (serial/pipe/net) is for
+        a debugger on another machine and must not load the VMM here.
+        """
         return await _gated(
             ctx,
             what="load the HyperDbg VMM (hypervisor)",
             audit="hd_vmm_load",
             fn=app_ctx(ctx).session.load_vmm,
-            ok="VMM loaded (kd driver installed).",
+            ok="VMM loaded (kd driver installed); connected in local VMI mode.",
         )
 
     @mcp.tool(name="hd_vmm_unload", annotations=DESTRUCTIVE)
@@ -116,7 +120,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             what="load all HyperDbg modules",
             audit="hd_modules_load_all",
             fn=app_ctx(ctx).session.load_all_modules,
-            ok="All modules loaded (kd driver installed).",
+            ok="All modules loaded (kd driver installed); connected in local VMI mode.",
         )
 
     @mcp.tool(name="hd_modules_unload_all", annotations=DESTRUCTIVE)
@@ -163,7 +167,13 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
     async def hd_process_start(
         path: str, ctx: Context, args: str = ""
     ) -> str | InputRequiredResult:
-        """Start a new process (optionally with args), breaking at its entry point."""
+        """Start a new process (optionally with args), breaking at its entry point.
+
+        HyperDbg's user debugger is beta: if the process is killed while still
+        stopped at the entry point, the int3 there can stay in the image's shared
+        page, and every later instance of that program crashes (0x80000003) until
+        the original byte is written back (hd_mem_edit, physical).
+        """
         return await _gated(
             ctx,
             what=f"start process {path}",

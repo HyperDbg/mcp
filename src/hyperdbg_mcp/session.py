@@ -164,6 +164,12 @@ def _wait_for_pipe(named_pipe: str, timeout: float = 3.0) -> None:
         time.sleep(0.05)
 
 
+# Printed asynchronously by libhyperdbg's event forwarding (forwarding.cpp) when
+# an event's output source fails, e.g. a closed `output` file; it lands in the
+# output of whatever command runs at that time and says nothing about it.
+_ASYNC_ERRORS = ("err, there was an error transferring the message to the remote sources",)
+
+
 def _reports_failure(output: str) -> bool:
     """HyperDbg commands return success and print why they did nothing.
 
@@ -171,7 +177,8 @@ def _reports_failure(output: str) -> bool:
     help text) or `err, ...`. Only the first line counts: some commands print a
     non-fatal `err,` between valid results (`!pcitree` without pci.ids).
     """
-    first = next((line.strip() for line in output.splitlines() if line.strip()), "")
+    lines = (line.strip() for line in output.splitlines())
+    first = next((ln for ln in lines if ln and not ln.startswith(_ASYNC_ERRORS)), "")
     return first.startswith(("incorrect use of", "err,"))
 
 
@@ -521,6 +528,17 @@ class HyperDbgSession:
         the CLI's `load vmm`: hyperdbg_u_load_vmm alone fails without the driver.
         """
         self._module_op("load vmm", self._install_kd_driver, self._dll.hyperdbg_u_load_vmm)
+        self._attach_local()
+
+    def _attach_local(self) -> None:
+        """After loading the VMM here, debug this machine (local VMI mode).
+
+        With the VMM loaded, libhyperdbg refuses Debugger-Mode connects (its
+        device is open), so local is the only mode left; without this the
+        session would report "not connected" for a working debugger.
+        """
+        if not self._connected:
+            self.connect_local()
 
     def unload_vmm(self) -> None:
         """Unload the HyperDbg hypervisor (VMM) and the kd module, like the CLI's `unload vmm`.
@@ -536,6 +554,7 @@ class HyperDbgSession:
         self._module_op(
             "load all modules", self._install_kd_driver, self._dll.hyperdbg_u_load_all_modules
         )
+        self._attach_local()
 
     def unload_all_modules(self) -> None:
         self._module_op("unload all modules", self._dll.hyperdbg_u_unload_all_modules)

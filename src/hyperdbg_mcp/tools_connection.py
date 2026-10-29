@@ -131,7 +131,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
             )
         except HyperDbgError as exc:
             a.audit.record("hd_connect", {"transport": transport}, status="error")
-            return f"connect failed: {exc}"
+            raise HyperDbgError(f"connect failed: {exc}") from exc
         last.update(
             transport=transport,
             port=port,
@@ -163,9 +163,14 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
                 "abort it: restart the debuggee to let it complete, or restart this server "
                 "to drop it"
             )
+        if not a.session.is_connected and a.session.mode is None:
+            return "not connected"
+        mode = a.session.mode
         await anyio.to_thread.run_sync(a.session.close)
         a.audit.record("hd_disconnect", {}, status="ok")
-        return "disconnected (resume + clean close sent)"
+        if mode == "remote":
+            return "disconnected (resume + clean close sent)"
+        return "disconnected (local session closed, HyperDbg modules unloaded)"
 
     @mcp.tool(name="hd_reconnect", annotations=STATE)
     async def hd_reconnect(ctx: Context) -> str:
@@ -192,7 +197,7 @@ def register_connection(mcp: MCPServer, *, read_only: bool) -> None:
             )
         except HyperDbgError as exc:
             a.audit.record("hd_reconnect", {}, status="error")
-            return f"reconnect failed: {exc}"
+            raise HyperDbgError(f"reconnect failed: {exc}") from exc
         if not done:
             return _waiting(10.0)
         a.audit.record("hd_reconnect", {}, status="ok")
