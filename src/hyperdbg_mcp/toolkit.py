@@ -163,6 +163,21 @@ def _can_elicit_form(ctx: Context) -> bool:
     return e is not None and (e.form is not None or e.url is None)
 
 
+def denial(ctx: Context) -> str:
+    """Why a target-mutating call did not run.
+
+    "Denied by user." would be wrong for a client that never asked anyone: say
+    the client can't confirm and how to opt in, so the agent can tell the user.
+    """
+    if _can_elicit_form(ctx):
+        return "Denied by user."
+    return (
+        "Denied: this MCP client cannot ask the user to confirm target-mutating "
+        "tools (it advertises no elicitation). Restart hyperdbg-mcp with "
+        "--assume-consent to allow them, or use a client that supports elicitation."
+    )
+
+
 async def require_confirmation(ctx: Context, what: str) -> bool | InputRequiredResult:
     """Ask the client to confirm; deny-by-default if elicitation is unavailable.
 
@@ -244,7 +259,7 @@ async def run_text_confirmed(
         return confirmed
     if not confirmed:
         a.audit.record(audit, args or {}, status="denied")
-        return "Denied by user."
+        return denial(ctx)
     try:
         out = await anyio.to_thread.run_sync(a.session.run_command, command)
     except HyperDbgError as exc:

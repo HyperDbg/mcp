@@ -124,7 +124,7 @@ def main() -> None:
             "Pre-approve target-mutating tools (hd_exec_command, hd_mem_write, "
             "hd_reg_write, hd_script_run, SDK calls). Use when the MCP client "
             "cannot elicit confirmation: otherwise every destructive tool "
-            "fails closed with 'Denied by user.'."
+            "fails closed."
         ),
     )
     parser.add_argument(

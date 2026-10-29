@@ -29,7 +29,7 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import choose, parse_addr, require_confirmation, resolve_addr
+from .toolkit import choose, denial, parse_addr, require_confirmation, resolve_addr
 
 if TYPE_CHECKING:  # pragma: no cover
     from mcp.server.mcpserver import MCPServer
@@ -196,7 +196,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
             return confirmed
         if not confirmed:
             app.audit.record("hd_exec_command", {"command": command}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         try:
             out = await anyio.to_thread.run_sync(app.session.run_command, command)
         except HyperDbgError as exc:
@@ -227,7 +227,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
             return confirmed
         if not confirmed:
             app.audit.record("hd_mem_write", {"address": hex(addr)}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         await anyio.to_thread.run_sync(
             partial(app.session.write_memory_bytes, addr, payload, pid=pid)
         )
@@ -246,7 +246,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
             return confirmed
         if not confirmed:
             app.audit.record("hd_reg_write", {"name": name}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         await anyio.to_thread.run_sync(app.session.write_register, name, val)
         app.audit.record("hd_reg_write", {"name": name}, status="ok")
         return f"Set {name} = {hex(val)}."
@@ -260,7 +260,7 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
             return confirmed
         if not confirmed:
             app.audit.record("hd_script_run", {}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         await anyio.to_thread.run_sync(app.session.run_script, script)
         app.audit.record("hd_script_run", {}, status="ok")
         return "Script executed."

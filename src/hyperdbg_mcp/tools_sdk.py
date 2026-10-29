@@ -14,7 +14,7 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
-from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, require_confirmation
+from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, denial, require_confirmation
 
 
 def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
@@ -77,7 +77,7 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
             return confirmed
         if not confirmed:
             app.audit.record(audit, {}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         try:
             result = await anyio.to_thread.run_sync(fn)
         except HyperDbgError as exc:

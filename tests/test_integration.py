@@ -89,7 +89,9 @@ async def test_write_denied_without_elicitation(tmp_path):
     srv = _build(read_only=False, tmp_path=tmp_path)
     async with Client(srv) as client:
         result = await client.call_tool("hd_reg_write", {"name": "rax", "value": "0x0"})
-    assert "Denied by user." in _text(result)
+    # Nobody was asked, so don't blame the user: name the client and the opt-in.
+    assert "cannot ask the user to confirm" in _text(result)
+    assert "--assume-consent" in _text(result)
 
 
 def _answer(confirm: bool):
