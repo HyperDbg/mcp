@@ -29,7 +29,14 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import choose, denial, parse_addr, require_confirmation, resolve_addr
+from .toolkit import (
+    choose,
+    denial,
+    parse_addr,
+    pure_expression,
+    require_confirmation,
+    resolve_addr,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
     from mcp.server.mcpserver import MCPServer
@@ -113,9 +120,13 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_eval", annotations=_RO)
     def hd_eval(expression: str, ctx: Context) -> str:
-        """Evaluate a HyperDbg script expression and return its integer value."""
+        """Evaluate a side-effect-free script expression (`poi(@rsp)+8`) to an integer.
+
+        Only reading functions are allowed (poi, db..dq, *_pa, strlen, ...); run
+        anything that writes with hd_script_run.
+        """
         app = _app(ctx)
-        value = app.session.eval_expression(expression)
+        value = app.session.eval_expression(pure_expression(expression))
         app.audit.record("hd_eval", {"expression": expression}, status="ok")
         return hex(value)
 

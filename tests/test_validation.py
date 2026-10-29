@@ -16,7 +16,13 @@ from mcp.types import ElicitResult  # noqa: E402
 
 from hyperdbg_mcp import server  # noqa: E402
 from hyperdbg_mcp.errors import HyperDbgError  # noqa: E402
-from hyperdbg_mcp.toolkit import bracket_body, choose, hex_values, token  # noqa: E402
+from hyperdbg_mcp.toolkit import (  # noqa: E402
+    bracket_body,
+    choose,
+    hex_values,
+    pure_expression,
+    token,
+)
 
 
 class RecordingSession:
@@ -196,3 +202,48 @@ def test_disasm_keeps_only_the_requested_instructions():
     out = _first_instructions(listing, 2)
     assert out.startswith("ntkrnlmp!KeBugCheckEx:\n")
     assert "79afd135" in out and "79afd13a" not in out
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "poi(@rsp) + 8",
+        "dq(nt!PsLoadedModuleList) == 0",
+        'strcmp(@rcx, "a;b{c}") != 0',
+        "virtual_to_physical(@rip) >= 0x1000",
+    ],
+)
+def test_pure_expression_accepts_reads(expr):
+    assert pure_expression(expr) == expr
+
+
+@pytest.mark.parametrize(
+    "expr",
+    [
+        "eq(nt!KdDebuggerEnabled, 1)",
+        "1); eq(0xfffff80000000000, 0",
+        "EB(@rcx, 0x90)",
+        "@rax = 1",
+        "$t0++",
+        "memcpy(0x1000, 0x2000, 8)",
+        "event_disable(1)",
+        "{ pause() }",
+        "",
+    ],
+)
+def test_pure_expression_rejects_side_effects(expr):
+    with pytest.raises(HyperDbgError):
+        pure_expression(expr)
+
+
+async def test_eval_never_reaches_the_engine_with_a_write(tmp_path):
+    session = SymbolSession()
+    srv = server.build_server(
+        read_only=True,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+    )
+    async with Client(srv) as client:
+        result = await client.call_tool("hd_eval", {"expression": "1); eq(0, 0"})
+    assert result.is_error and session.evaluated == []

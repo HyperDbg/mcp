@@ -122,6 +122,59 @@ def hex_values(value: str, name: str = "value") -> str:
     return value.strip()
 
 
+# Script-engine functions with no side effects (script-engine/python/Grammar.txt).
+# Everything else (eb/ed/eq, memcpy, interlocked_*, event_*, pause, spinlock_*...)
+# writes memory or changes debugger state.
+_PURE_FUNCTIONS = frozenset(
+    """poi db dd dw dq neg hi low not check_address disassemble_len disassemble_len32
+    disassemble_len64 reference physical_to_virtual virtual_to_physical poi_pa hi_pa
+    low_pa db_pa dd_pa dw_pa dq_pa strlen wcslen strcmp wcscmp memcmp strncmp wcsncmp
+    rdtsc rdtscp""".split()
+)
+_STRING_LITERAL = re.compile(r'"[^"\\\r\n]*"')
+_CALL = re.compile(r"([A-Za-z_]\w*)\s*\(")
+_ASSIGNMENT = re.compile(r"(?<![=!<>])=(?!=)|\+\+|--")
+
+
+def pure_expression(expr: str) -> str:
+    """Require a script expression that only reads (for read-only tools).
+
+    HyperDbg evaluates it as `formats(<expr>);`, in the kernel when debugging
+    a remote target: a `;` would end that statement and start another, and a
+    call like eq() or an assignment would write to the target.
+    """
+    code = _STRING_LITERAL.sub('""', expr)
+    if not expr.strip() or any(c in code for c in ";{}\\"):
+        raise HyperDbgError(f"invalid expression {expr!r} (one expression, no ; {{ }} \\)")
+    if _ASSIGNMENT.search(code):
+        raise HyperDbgError(f"invalid expression {expr!r} (assignments are not allowed)")
+    for name in _CALL.findall(code):
+        if name not in _PURE_FUNCTIONS:
+            raise HyperDbgError(
+                f"function {name}() is not allowed in a read-only expression "
+                "(use hd_script_run for scripts with side effects)"
+            )
+    return expr.strip()
+
+
+def host_path(path: str, name: str = "path") -> str:
+    """A file path on the debugger host, quoted as one CLI token."""
+    if not path or any(c in path for c in '"\r\n'):
+        raise HyperDbgError(f"invalid {name} {path!r}")
+    return f'"{path}"'
+
+
+_NAME = re.compile(r"[A-Za-z_][\w]*")
+
+
+def output_names(value: str) -> str:
+    """Validate a comma-separated list of output source names (`output` command)."""
+    names = [n.strip() for n in value.split(",")]
+    if not all(_NAME.fullmatch(n) for n in names):
+        raise HyperDbgError(f"invalid output name(s) {value!r} (identifiers, comma-separated)")
+    return ", ".join(names)
+
+
 def bracket_body(text: str, name: str = "script") -> str:
     """Validate text for a `{ ... }` block exactly as HyperDbg's tokenizer reads it.
 
