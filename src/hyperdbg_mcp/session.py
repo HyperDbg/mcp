@@ -200,6 +200,34 @@ def _reports_failure(output: str) -> bool:
     return first.startswith(_FAILURE_PREFIXES)
 
 
+_FAILURE_HINTS = (
+    (
+        "demand paging",
+        "The page is not resident in the target, so HyperDbg cannot hook it yet: let "
+        "the debuggee execute that code once (continue, then pause) and set the hook "
+        "again. '.pagein' would force it, but it exists only in Debugger Mode.",
+    ),
+    (
+        "only valid if you connected to a debuggee in debugger-mode",
+        "This command needs Debugger Mode (serial/pipe/net). Set the same event with "
+        "the VMI-mode equivalents: hd_hook_ept2 instead of hd_bp_set, hd_hook_monitor, ...",
+    ),
+    (
+        "not yet supported in vmi mode",
+        "This part of HyperDbg is Debugger-Mode only; nothing in VMI mode can do it.",
+    ),
+)
+
+
+def _failure_hint(output: str) -> str:
+    """Turn the usual HyperDbg dead ends into what to do instead."""
+    low = output.lower()
+    for marker, hint in _FAILURE_HINTS:
+        if marker in low:
+            return hint
+    return ""
+
+
 class HyperDbgSession:
     """Owns the libhyperdbg handle and serializes access to it.
 
@@ -800,8 +828,11 @@ class HyperDbgSession:
         if _is_error_status(status) or _reports_failure(output):
             # Debuggee output is attacker-controlled even on failure; fence it
             # so it can never reach the model as unmarked text (review H2).
+            hint = _failure_hint(output)
             raise HyperDbgError(
-                f"run_command({command!r}) failed (status=0x{status & 0xFFFFFFFF:08X}).\n"
+                f"run_command({command!r}) failed (status=0x{status & 0xFFFFFFFF:08X})."
+                + (f"\n{hint}" if hint else "")
+                + "\n"
                 + wrap_untrusted(output, "command-output"),
                 status_code=status,
             )
@@ -868,11 +899,17 @@ class HyperDbgSession:
         buf = create_string_buffer(size)
         ret_len = c_uint32(0)
         mem_type = ffi.ReadMemoryType.VIRTUAL if virtual else ffi.ReadMemoryType.PHYSICAL
+        # The CLI's own d*/u* always read through the kernel (READ_FROM_KERNEL);
+        # READ_FROM_VMX_ROOT is for a debugger running inside the hypervisor and
+        # silently returns nothing from a local session (verified on hardware).
+        reading_type = (
+            ffi.ReadingType.FROM_VMX_ROOT if self._mode == "remote" else ffi.ReadingType.FROM_KERNEL
+        )
         with self._ops():
             self._dll.hyperdbg_u_read_memory(
                 c_uint64(address),
                 mem_type,
-                ffi.ReadingType.FROM_VMX_ROOT,
+                reading_type,
                 c_uint32(self._target_pid(pid)),
                 c_uint32(size),
                 c_ubyte(0),  # get_address_mode = false
@@ -881,6 +918,13 @@ class HyperDbgSession:
                 byref(ret_len),
             )
         n = min(ret_len.value, size)
+        if n == 0:
+            # libhyperdbg reports a failure through the length only; an empty
+            # result must not look like "the memory is empty".
+            raise HyperDbgError(
+                f"memory at {address:#x} could not be read (pid {self._target_pid(pid):#x}): "
+                "the page is not mapped in that process, or it is paged out (try hd_pagein)"
+            )
         return buf.raw[:n]
 
     def write_memory_bytes(

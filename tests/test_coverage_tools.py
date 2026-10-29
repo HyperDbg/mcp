@@ -97,7 +97,8 @@ async def test_tool_sends_expected_command(tmp_path, tool, args, expected):
     async with Client(srv, elicitation_callback=accept) as client:
         result = await client.call_tool(tool, args)
     assert not result.is_error, result.content
-    assert session.commands == [expected]
+    # hd_output first reads the current state (output), so check the last one.
+    assert session.commands[-1] == expected
 
 
 @pytest.mark.parametrize(
