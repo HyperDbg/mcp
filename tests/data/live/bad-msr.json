@@ -1,0 +1,10 @@
+{
+ "case": "bad-msr",
+ "tool": "hd_msr_read",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_msr_read: invalid address/value 'zz' (use hex like 0x... or decimal)"
+  }
+ ]
+}

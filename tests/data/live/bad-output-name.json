@@ -1,0 +1,10 @@
+{
+ "case": "bad-output-name",
+ "tool": "hd_output_create",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_output_create: invalid name 'a,b' (one name)"
+  }
+ ]
+}

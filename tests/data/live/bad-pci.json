@@ -1,0 +1,10 @@
+{
+ "case": "bad-pci",
+ "tool": "hd_pci_cam",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_pci_cam: bus 0-0xff, device 0-0x1f, function 0-7"
+  }
+ ]
+}

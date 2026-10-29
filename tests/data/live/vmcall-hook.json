@@ -1,0 +1,10 @@
+{
+ "case": "vmcall-hook",
+ "tool": "hd_hook_vmcall",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

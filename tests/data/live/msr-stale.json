@@ -1,0 +1,10 @@
+{
+ "case": "msr-stale",
+ "tool": "hd_msr_write",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_msr_write: MSR 0xc0000082 no longer holds 0x1 (now core 0: 0xfffff8008aec1840); nothing written"
+  }
+ ]
+}

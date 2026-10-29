@@ -268,6 +268,12 @@ async def test_eval_never_reaches_the_engine_with_a_write(tmp_path):
             "err, the process id is invalid",
             True,
         ),
+        # a progress line comes before the verdict (recorded from '.attach pid 4')
+        (
+            "Attaching to process 0x4 (4)...\n\n"
+            "err, unable to detect whether the process was 32-bit or 64-bit (c000002e)\n",
+            True,
+        ),
         ("", False),
     ],
 )

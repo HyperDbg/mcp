@@ -1,0 +1,10 @@
+{
+ "case": "bad-output-type",
+ "tool": "hd_output_create",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_output_create: invalid output_type 'zzz' (use file | namedpipe | tcp | module)"
+  }
+ ]
+}

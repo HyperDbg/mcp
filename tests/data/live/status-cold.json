@@ -1,0 +1,10 @@
+{
+ "case": "status-cold",
+ "tool": "hd_status",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_status: HyperDbg session is not connected"
+  }
+ ]
+}

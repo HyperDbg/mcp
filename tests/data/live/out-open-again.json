@@ -1,0 +1,10 @@
+{
+ "case": "out-open-again",
+ "tool": "hd_output",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "output source 'tcr12640391339' is already open"
+  }
+ ]
+}

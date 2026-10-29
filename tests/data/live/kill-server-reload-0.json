@@ -1,0 +1,10 @@
+{
+ "case": "kill-server-reload-0",
+ "tool": "hd_vmm_load",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "VMM loaded (kd driver installed); connected in local VMI mode."
+  }
+ ]
+}

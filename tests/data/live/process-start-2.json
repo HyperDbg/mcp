@@ -1,0 +1,10 @@
+{
+ "case": "process-start-2",
+ "tool": "hd_process_start",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Started C:\\work\\hdtest2\\hdtest.exe."
+  }
+ ]
+}

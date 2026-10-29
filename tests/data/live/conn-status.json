@@ -1,0 +1,10 @@
+{
+ "case": "conn-status",
+ "tool": "hd_connection_status",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "connected=True, mode=local, running=False"
+  }
+ ]
+}

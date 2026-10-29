@@ -1,0 +1,10 @@
+{
+ "case": "disasm-cold",
+ "tool": "hd_disasm",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_disasm: HyperDbg session is not connected"
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "case": "bad-prealloc-kind",
+ "tool": "hd_prealloc",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_prealloc: invalid kind 'zzz' (use thread-interception | monitor | epthook | epthook2 | regular-event | big-event | regular-safe-buffer | big-safe-buffer)"
+  }
+ ]
+}

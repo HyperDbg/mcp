@@ -1,0 +1,10 @@
+{
+ "case": "cycle-unload-2",
+ "tool": "hd_vmm_unload",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "VMM and kd module unloaded."
+  }
+ ]
+}

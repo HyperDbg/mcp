@@ -206,10 +206,14 @@ def _reports_failure(output: str) -> bool:
     Their first line is then `incorrect use of the '<cmd>'` (followed by the
     help text), `err, ...` or that a needed module is not loaded. Only the
     first line counts: some commands print a non-fatal `err,` between valid
-    results (`!pcitree` without pci.ids).
+    results (`!pcitree` without pci.ids). A progress line ("Attaching to
+    process 0x4 (4)...") comes before the verdict and is skipped.
     """
     lines = (line.strip() for line in output.splitlines())
-    first = next((ln for ln in lines if ln and not ln.startswith(_ASYNC_ERRORS)), "")
+    first = next(
+        (ln for ln in lines if ln and not ln.startswith(_ASYNC_ERRORS) and not ln.endswith("...")),
+        "",
+    )
     if first.startswith(_FAILURE_PREFIXES):
         return True
     low = first.lower()

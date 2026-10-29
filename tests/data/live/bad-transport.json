@@ -1,0 +1,10 @@
+{
+ "case": "bad-transport",
+ "tool": "hd_connect",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_connect: connect failed: unknown transport 'zzz' (use one of ('serial', 'local', 'pipe', 'net'))"
+  }
+ ]
+}

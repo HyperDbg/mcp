@@ -1,0 +1,10 @@
+{
+ "case": "umd-reg-2",
+ "tool": "hd_reg_read",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "0x7ff86008c8fc"
+  }
+ ]
+}

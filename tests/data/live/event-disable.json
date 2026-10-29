@@ -1,0 +1,10 @@
+{
+ "case": "event-disable",
+ "tool": "hd_event_disable",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

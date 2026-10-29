@@ -1,0 +1,10 @@
+{
+ "case": "umd-continue",
+ "tool": "hd_exec_continue",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Continued."
+  }
+ ]
+}

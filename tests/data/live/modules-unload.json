@@ -1,0 +1,10 @@
+{
+ "case": "modules-unload",
+ "tool": "hd_modules_unload_all",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "All modules unloaded."
+  }
+ ]
+}

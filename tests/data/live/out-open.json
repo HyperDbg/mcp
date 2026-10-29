@@ -1,0 +1,10 @@
+{
+ "case": "out-open",
+ "tool": "hd_output",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the output request)"
+  }
+ ]
+}

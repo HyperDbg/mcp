@@ -1,0 +1,10 @@
+{
+ "case": "cpu-vendor",
+ "tool": "hd_cpu_vendor",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Intel"
+  }
+ ]
+}

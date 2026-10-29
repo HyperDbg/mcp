@@ -1,0 +1,10 @@
+{
+ "case": "mem-write-stale",
+ "tool": "hd_mem_write",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_mem_write: memory at 0xfffff8008b20db80 no longer holds cccccccc (now 48895c24); nothing written"
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "case": "msr-kernel-gs-refused",
+ "tool": "hd_msr_write",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_msr_write: MSR 0xc0000102 (IA32_KERNEL_GS_BASE) belongs to the thread running on the core and changes on every context switch; set a thread's FS/GS base in its context instead (hd_reg_write on a halted thread)"
+  }
+ ]
+}

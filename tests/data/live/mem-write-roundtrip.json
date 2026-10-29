@@ -1,0 +1,10 @@
+{
+ "case": "mem-write-roundtrip",
+ "tool": "hd_mem_write",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Wrote 16 bytes to 0xfffff8008b20db80."
+  }
+ ]
+}
