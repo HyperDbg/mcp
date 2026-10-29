@@ -158,13 +158,21 @@ def pure_expression(expr: str) -> str:
 
 
 def host_path(path: str, name: str = "path") -> str:
-    """A file path on the debugger host, quoted as one CLI token."""
+    """A file path on the debugger host, quoted as one CLI token.
+
+    Absolute only: a relative path lands in whatever directory the server was
+    started from (C:\\Windows\\System32 under a service), which nobody can find
+    again.
+    """
     if not path or any(c in path for c in '"\r\n'):
         raise HyperDbgError(f"invalid {name} {path!r}")
+    if not (_ABSOLUTE_PATH.match(path) or path.startswith("\\\\")):
+        raise HyperDbgError(f"invalid {name} {path!r} (absolute path, e.g. C:\\work\\out.bin)")
     return f'"{path}"'
 
 
 _NAME = re.compile(r"[A-Za-z_][\w]*")
+_ABSOLUTE_PATH = re.compile(r"[A-Za-z]:[\\/]")
 
 
 _OUTPUT_NAME = re.compile(r"[A-Za-z0-9_.\-]+")

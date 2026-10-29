@@ -56,13 +56,14 @@ class Case:
     expect: str = "ok"
     contains: str = ""
     note: str = ""
+    dangerous: bool = False  # can crash the machine: opt in with --dangerous
 
 
 def cases() -> list[Case]:
     c: list[Case] = []
 
-    def add(phase, case_id, tool, args=None, expect="ok", contains="", note=""):
-        c.append(Case(phase, case_id, tool, args or {}, expect, contains, note))
+    def add(phase, case_id, tool, args=None, expect="ok", contains="", note="", dangerous=False):
+        c.append(Case(phase, case_id, tool, args or {}, expect, contains, note, dangerous))
 
     # ----- cold: before the VMM is loaded ---------------------------------- #
     add("cold", "status-cold", "hd_status", {}, "error", "not connected")
@@ -152,10 +153,10 @@ def cases() -> list[Case]:
     add("events", "flush", "hd_flush", {}, "ok")
     add("events", "io-in", "hd_io_in", {"port": 128, "width": "al"}, "ok", note="needs the kd module, which the VMM load installs")
     add("events", "io-out", "hd_io_out", {"port": 128, "value": 0, "width": "al"}, "ok", note="port 0x80 is the POST port")
+    add("events", "mem-dump", "hd_mem_dump", {"from_address": QUERY_PC, "to_address": QUERY_PC + "+0x10", "path": DUMP_FILE}, "ok", note="needs the kd module: keep it before the module unload")
     add("events", "modules-load", "hd_modules_load_all", {}, "any", note="loads every HyperDbg module")
     add("events", "modules-unload", "hd_modules_unload_all", {}, "any")
     add("events", "sym-reload-after-modules", "hd_sym_reload", {}, "any", note="the module ops drop the symbol tables")
-    add("events", "mem-dump", "hd_mem_dump", {"from_address": QUERY_PC, "to_address": QUERY_PC + "+0x10", "path": DUMP_FILE}, "ok")
     add("events", "lbr-disable", "hd_lbr", {"action": "disable"}, "any")
     add("events", "lbr-filter", "hd_lbr_filter", {"exclude": ["kernel", "user"]}, "any")
     add("events", "pt-control", "hd_pt_control", {"action": "disable"}, "any")
@@ -170,10 +171,10 @@ def cases() -> list[Case]:
     add("events", "user-thread-list", "hd_user_thread_switch", {}, "any")
 
     # ----- writes ---------------------------------------------------------- #
-    add("write", "mem-write-roundtrip", "hd_mem_write", {"address": QUERY_PC, "data_hex": "48895c2408574883"}, "any", note="writes the bytes it read")
+    add("write", "mem-write-roundtrip", "hd_mem_write", {"address": QUERY_PC, "data_hex": "echo"}, "any", note="reads 8 bytes, writes them back unchanged")
     add("write", "mem-edit-roundtrip", "hd_mem_edit", {"address": QUERY_PC, "value": "0x48", "fmt": "byte"}, "any")
     add("write", "reg-write", "hd_reg_write", {"name": "rip", "value": "0x140000000"}, "any", note="needs a halted context")
-    add("write", "msr-write", "hd_msr_write", {"msr_id": "0xC0000082", "value": "0x0"}, "any")
+    add("write", "msr-write", "hd_msr_write", {"msr_id": "0xC0000082", "value": "echo"}, "any", note="reads LSTAR, writes it back; --dangerous only", dangerous=True)
     add("write", "pagein", "hd_pagein", {"address": QUERY_PC}, "error", "debugger mode")
     add("write", "bp-set", "hd_bp_set", {"address": "nt!NtClose"}, "error", "debugger mode")
     add("write", "bp-modify", "hd_bp_modify", {"breakpoint_id": 0, "action": "disable"}, "any")
@@ -309,8 +310,30 @@ async def run(args) -> int:
                     if args.only and args.only not in case.case_id:
                         results.append(Result(case, "SKIP", "filtered"))
                         continue
+                    if case.dangerous and not args.dangerous:
+                        results.append(Result(case, "SKIP", "dangerous: pass --dangerous"))
+                        continue
+                    call_args = dict(case.args)
+                    if "echo" in call_args.values() and case.tool in ("hd_mem_write", "hd_msr_write"):
+                        # Never invent a value: write back what is there now, so the
+                        # case exercises the write path without changing the system
+                        # (a wrong MSR write, e.g. LSTAR=0, bugchecks the machine).
+                        try:
+                            if case.tool == "hd_msr_write":
+                                _, cur = await call(session, "hd_msr_read", {"msr_id": call_args["msr_id"]}, args.timeout)
+                                digits = [w for w in cur.replace("0x", " ").split() if all(ch in "0123456789abcdefABCDEF" for ch in w) and len(w) >= 4]
+                                call_args["value"] = "0x" + digits[-1] if digits else "0x0"
+                            else:
+                                _, cur = await call(session, "hd_mem_read", {"address": call_args["address"], "size": 8}, args.timeout)
+                                start = cur.find("hex")
+                                hexstr = cur[start:start + 200].split(chr(34))[3] if start >= 0 else ""
+                                hexstr = "".join(ch for ch in hexstr if ch in "0123456789abcdefABCDEF")
+                                call_args["data_hex"] = hexstr[:16] or "0"
+                        except Exception as exc:  # noqa: BLE001
+                            results.append(Result(case, "SKIP", f"echo failed: {exc}"))
+                            continue
                     try:
-                        is_err, text = await call(session, case.tool, case.args, args.timeout)
+                        is_err, text = await call(session, case.tool, call_args, args.timeout)
                     except Exception as exc:  # noqa: BLE001 - report and continue
                         results.append(Result(case, "FAIL", f"{type(exc).__name__}: {exc}"))
                         continue
@@ -369,6 +392,11 @@ def main() -> int:
     ap.add_argument("--only", default=None, help="run only cases whose id contains this")
     ap.add_argument("--timeout", type=float, default=90.0, help="per-call timeout, seconds")
     ap.add_argument("--report", default=None, help="write a JSON report here")
+    ap.add_argument(
+        "--dangerous",
+        action="store_true",
+        help="also run the cases that can crash the machine (MSR write round-trip)",
+    )
     args = ap.parse_args()
     try:
         return asyncio.run(run(args))
