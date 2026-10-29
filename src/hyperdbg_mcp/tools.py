@@ -123,7 +123,9 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
         """Evaluate a side-effect-free script expression (`poi(@rsp)+8`) to an integer.
 
         Only reading functions are allowed (poi, db..dq, *_pa, strlen, ...); run
-        anything that writes with hd_script_run.
+        anything that writes with hd_script_run. In local VMI mode HyperDbg only
+        simulates the engine (registers are 0, no memory access): symbols and
+        arithmetic work there, poi()/db() need Debugger Mode.
         """
         app = _app(ctx)
         value = app.session.eval_expression(pure_expression(expression))

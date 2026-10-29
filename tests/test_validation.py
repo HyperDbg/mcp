@@ -247,3 +247,19 @@ async def test_eval_never_reaches_the_engine_with_a_write(tmp_path):
     async with Client(srv) as client:
         result = await client.call_tool("hd_eval", {"expression": "1); eq(0, 0"})
     assert result.is_error and session.evaluated == []
+
+
+@pytest.mark.parametrize(
+    ("output", "failed"),
+    [
+        ("incorrect use of the 'ucpuid'\n\nucpuid : reads CPUID...", True),
+        ("\nerr, listing breakpoints is only valid in debugger-mode\n", True),
+        ("DBDF | VID:DID\nerr, cannot open file 'pci.ids'\n0000:00:00:0 | 8086:a707", False),
+        ("core : 0x0 - msr[c0000082] = fffff800`df2c1840", False),
+        ("", False),
+    ],
+)
+def test_printed_failures_are_errors(output, failed):
+    from hyperdbg_mcp.session import _reports_failure
+
+    assert _reports_failure(output) is failed

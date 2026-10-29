@@ -76,6 +76,10 @@ _CASES = [
     ("hd_settings", {"option": "syntax", "value": "att"}, "settings syntax att"),
     ("hd_settings", {"option": "autoflush"}, "settings autoflush"),
     ("hd_measure", {"default": True}, "!measure default"),
+    ("hd_cpuid", {"opcode": 4, "subfunction": 2}, "ucpuid 0x4 0x2"),
+    ("hd_msr_read", {"msr_id": "0xC0000082", "core": 2}, "rdmsr 0xc0000082 core 0x2"),
+    ("hd_msr_write", {"msr_id": "0xC0000103", "value": "0x5", "core": 0},
+     "wrmsr 0xc0000103 0x5 core 0x0"),
 ]
 
 

@@ -164,6 +164,17 @@ def _wait_for_pipe(named_pipe: str, timeout: float = 3.0) -> None:
         time.sleep(0.05)
 
 
+def _reports_failure(output: str) -> bool:
+    """HyperDbg commands return success and print why they did nothing.
+
+    Their first line is then `incorrect use of the '<cmd>'` (followed by the
+    help text) or `err, ...`. Only the first line counts: some commands print a
+    non-fatal `err,` between valid results (`!pcitree` without pci.ids).
+    """
+    first = next((line.strip() for line in output.splitlines() if line.strip()), "")
+    return first.startswith(("incorrect use of", "err,"))
+
+
 class HyperDbgSession:
     """Owns the libhyperdbg handle and serializes access to it.
 
@@ -693,7 +704,7 @@ class HyperDbgSession:
             _mark_interpreter_used()
             status = self._dll.hyperdbg_u_run_command(command.encode("utf-8"))
             output = self._drain_settled()
-        if _is_error_status(status):
+        if _is_error_status(status) or _reports_failure(output):
             # Debuggee output is attacker-controlled even on failure; fence it
             # so it can never reach the model as unmarked text (review H2).
             raise HyperDbgError(

@@ -431,6 +431,12 @@ def load_libhyperdbg(path: str | None = None) -> CDLL:
                 os.add_dll_directory(lib_dir)
             except OSError:
                 pass
+            # HyperDbg also loads DLLs at run time with a plain LoadLibrary, which
+            # ignores add_dll_directory: pdbex's LoadLibrary("msdia140.dll") then
+            # fails under python.exe and `dt` / `struct` print nothing.
+            import ctypes
+
+            ctypes.windll.kernel32.SetDllDirectoryW(lib_dir)
 
     try:
         dll = CDLL(resolved)

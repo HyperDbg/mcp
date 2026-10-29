@@ -24,41 +24,39 @@ def register_system(mcp: MCPServer, *, read_only: bool) -> None:
         return run_text(ctx, "cpu", audit="hd_cpu_info", kind="system")
 
     @mcp.tool(name="hd_cpuid", annotations=RO)
-    def hd_cpuid(opcode: int, ctx: Context, subfunction: int = 0, kernel_mode: bool = False) -> str:
+    def hd_cpuid(opcode: int, ctx: Context, subfunction: int = 0) -> str:
         """Execute CPUID instruction (opcode, optional subfunction)."""
         cmd = f"ucpuid {opcode:#x}"
         if subfunction:
             cmd += f" {subfunction:#x}"
-        if kernel_mode:
-            cmd += " KernelMode yes"
         return run_text(ctx, cmd, audit="hd_cpuid", kind="system", args={"opcode": opcode})
 
     @mcp.tool(name="hd_msr_read", annotations=RO)
-    def hd_msr_read(msr_id: int, ctx: Context, kernel_mode: bool = False) -> str:
-        """Read a Model-Specific Register (MSR)."""
-        cmd = f"rdmsr {msr_id:#x}"
-        if kernel_mode:
-            cmd += " KernelMode yes"
-        return run_text(ctx, cmd, audit="hd_msr_read", kind="system", args={"msr_id": msr_id})
+    def hd_msr_read(msr_id: str, ctx: Context, core: int = -1) -> str:
+        """Read a Model-Specific Register (MSR id as hex, e.g. "0xC0000082") on every
+        core, or on one `core`."""
+        msr = parse_addr(msr_id)
+        cmd = f"rdmsr {msr:#x}" + (f" core {core:#x}" if core >= 0 else "")
+        return run_text(ctx, cmd, audit="hd_msr_read", kind="system", args={"msr_id": msr})
 
     if read_only:
         return
 
     @mcp.tool(name="hd_msr_write", annotations=DESTRUCTIVE)
     async def hd_msr_write(
-        msr_id: int, value: str, ctx: Context, kernel_mode: bool = False
+        msr_id: str, value: str, ctx: Context, core: int = -1
     ) -> str | InputRequiredResult:
-        """Write a Model-Specific Register (MSR); value is a 64-bit hex string."""
-        cmd = f"wrmsr {msr_id:#x} {parse_addr(value):#x}"
-        if kernel_mode:
-            cmd += " KernelMode yes"
+        """Write a Model-Specific Register (MSR id and 64-bit value as hex strings) on
+        every core, or on one `core`."""
+        msr = parse_addr(msr_id)
+        cmd = f"wrmsr {msr:#x} {parse_addr(value):#x}" + (f" core {core:#x}" if core >= 0 else "")
         return await run_text_confirmed(
             ctx,
             cmd,
-            what=f"write MSR {msr_id:#x}",
+            what=f"write MSR {msr:#x}: {cmd}",
             audit="hd_msr_write",
             kind="system",
-            args={"msr_id": msr_id},
+            args={"msr_id": msr},
         )
 
     @mcp.tool(name="hd_io_in", annotations=DESTRUCTIVE)

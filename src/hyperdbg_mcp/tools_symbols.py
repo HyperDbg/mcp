@@ -9,7 +9,22 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from .toolkit import RO, STATE, host_path, resolve_addr, run_text, token
+from .errors import HyperDbgError
+from .safety import wrap_untrusted
+from .toolkit import RO, STATE, app_ctx, host_path, resolve_addr, run_text, token
+
+
+def _type_text(ctx: Context, cmd: str, *, audit: str, type_name: str) -> str:
+    """run_text for dt/struct, which print nothing at all for an unknown type."""
+    app = app_ctx(ctx)
+    out = app.session.run_command(cmd)
+    if not out.strip():
+        raise HyperDbgError(
+            f"type {type_name!r} not found (module!_TYPE, e.g. nt!_EPROCESS; "
+            "symbols loaded with hd_sym_path + hd_sym_reload?)"
+        )
+    app.audit.record(audit, {"type_name": type_name}, status="ok")
+    return wrap_untrusted(out, "symbols")
 
 
 def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
@@ -28,17 +43,13 @@ def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
             cmd += f" {addr:#x}"
         if pid:
             cmd += f" pid {pid:#x}"
-        return run_text(
-            ctx, cmd, audit="hd_struct_display", kind="symbols", args={"type_name": type_name}
-        )
+        return _type_text(ctx, cmd, audit="hd_struct_display", type_name=type_name)
 
     @mcp.tool(name="hd_struct_export", annotations=RO)
     def hd_struct_export(type_name: str, ctx: Context) -> str:
         """Export struct type definition."""
         cmd = f"struct {token(type_name, 'type_name')}"
-        return run_text(
-            ctx, cmd, audit="hd_struct_export", kind="symbols", args={"type_name": type_name}
-        )
+        return _type_text(ctx, cmd, audit="hd_struct_export", type_name=type_name)
 
     @mcp.tool(name="hd_pe_parse", annotations=RO)
     def hd_pe_parse(path: str, ctx: Context, section: str = "") -> str:
