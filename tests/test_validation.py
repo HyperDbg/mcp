@@ -263,3 +263,22 @@ def test_printed_failures_are_errors(output, failed):
     from hyperdbg_mcp.session import _reports_failure
 
     assert _reports_failure(output) is failed
+
+
+class FailingSession(RecordingSession):
+    def run_command(self, command):
+        super().run_command(command)
+        raise HyperDbgError("run_command failed: err, not in Debugger Mode")
+
+
+async def test_gated_tool_failure_is_a_tool_error(tmp_path):
+    srv = server.build_server(
+        read_only=False,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=FailingSession,
+        assume_consent=True,
+    )
+    async with Client(srv) as client:
+        result = await client.call_tool("hd_process_switch", {"pid": 4})
+    assert result.is_error and "Debugger Mode" in _text(result)

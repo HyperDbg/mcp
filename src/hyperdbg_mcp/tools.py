@@ -274,6 +274,6 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
         if not confirmed:
             app.audit.record("hd_script_run", {}, status="denied")
             return denial(ctx)
-        await anyio.to_thread.run_sync(app.session.run_script, script)
+        out = await anyio.to_thread.run_sync(app.session.run_script, script)
         app.audit.record("hd_script_run", {}, status="ok")
-        return "Script executed."
+        return wrap_untrusted(out, "script-output") if out.strip() else "Script executed."

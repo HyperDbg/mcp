@@ -877,7 +877,21 @@ class HyperDbgSession:
             )
         return value
 
-    def run_script(self, script: str) -> None:
+    def run_script(self, script: str) -> str:
+        """Run a script on the target; return what it printed.
+
+        Needs Debugger Mode or a paused user-mode process; HyperDbg says why
+        not (ShowErrorMessageIfAny), and that text goes into the error.
+        """
         self._require_connected()
         with self._lock:
-            self._dll.hyperdbg_u_run_script(script.encode("utf-8"), c_ubyte(0))
+            self._drain()
+            try:
+                self._dll.hyperdbg_u_run_script(script.encode("utf-8"), c_ubyte(1))
+            except HyperDbgError as exc:
+                output = self._drain_settled()
+                raise HyperDbgError(
+                    f"{exc}\n" + wrap_untrusted(output, "script-output"),
+                    status_code=exc.status_code,
+                ) from None
+            return self._drain_settled()

@@ -108,8 +108,8 @@ class MockSession:
     def run_command(self, command: str) -> str:
         return f"[mock] executed: {command}"
 
-    def run_script(self, script: str) -> None:
-        return None
+    def run_script(self, script: str) -> str:
+        return ""
 
     def eval_expression(self, expr: str) -> int:
         return len(expr)

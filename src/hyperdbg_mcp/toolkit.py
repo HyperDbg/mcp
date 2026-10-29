@@ -304,7 +304,8 @@ async def run_text_confirmed(
     """Confirm, then run a target-mutating command off-thread; fence the output.
 
     For destructive tools (async `def`). Denies by default if the client can't
-    elicit. Any HyperDbgError is fenced (session already wraps failure output).
+    elicit. A HyperDbgError (its target output already fenced by the session)
+    propagates, so the client sees a tool error, as with read tools.
     """
     a = app_ctx(ctx)
     confirmed = await require_confirmation(ctx, what)
@@ -315,8 +316,8 @@ async def run_text_confirmed(
         return denial(ctx)
     try:
         out = await anyio.to_thread.run_sync(a.session.run_command, command)
-    except HyperDbgError as exc:
+    except HyperDbgError:
         a.audit.record(audit, args or {}, status="error")
-        return str(exc)
+        raise
     a.audit.record(audit, args or {}, status="ok")
     return wrap_untrusted(out, kind)
