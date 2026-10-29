@@ -10,9 +10,7 @@ import pytest
 
 pytest.importorskip("mcp")
 
-from mcp.shared.memory import (  # noqa: E402
-    create_connected_server_and_client_session as client_session,
-)
+from mcp import Client  # noqa: E402
 
 from hyperdbg_mcp import server  # noqa: E402
 from hyperdbg_mcp.mock import MockSession  # noqa: E402
@@ -29,7 +27,7 @@ async def test_mock_backend_runs_read_tools(tmp_path):
         audit_path=str(tmp_path / "audit.jsonl"),
         session_factory=MockSession,
     )
-    async with client_session(srv._mcp_server) as client:
+    async with Client(srv) as client:
         status = await client.call_tool("hd_status", {})
         regs = await client.call_tool("hd_reg_read_all", {})
         mem = await client.call_tool("hd_mem_read", {"address": "0x1000", "size": 4})

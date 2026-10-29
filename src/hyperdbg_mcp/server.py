@@ -13,7 +13,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .safety import AuditLog
 from .session import HyperDbgSession
@@ -58,7 +58,7 @@ def build_server(
     audit_path: str,
     session_factory: Callable[[], HyperDbgSession] | None = None,
     connect: Callable[[HyperDbgSession], None] | None = None,
-) -> FastMCP:
+) -> MCPServer:
     audit = AuditLog(audit_path)
 
     def _default_factory() -> HyperDbgSession:
@@ -71,7 +71,7 @@ def build_server(
     do_connect = connect
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
+    async def lifespan(_server: MCPServer) -> AsyncIterator[AppContext]:
         session = factory()
         if do_connect is not None:
             do_connect(session)
@@ -84,7 +84,7 @@ def build_server(
             atexit.unregister(session.close)
             session.close()
 
-    mcp = FastMCP("hyperdbg-mcp", lifespan=lifespan)
+    mcp = MCPServer("hyperdbg-mcp", lifespan=lifespan)
     register_tools(mcp, read_only=read_only)
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)

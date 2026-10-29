@@ -7,12 +7,13 @@
 
 from __future__ import annotations
 
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .toolkit import DESTRUCTIVE, RO, parse_addr, run_text, run_text_confirmed
 
 
-def register_system(mcp: FastMCP, *, read_only: bool) -> None:
+def register_system(mcp: MCPServer, *, read_only: bool) -> None:
     @mcp.tool(name="hd_cpu_info", annotations=RO)
     def hd_cpu_info(ctx: Context) -> str:
         """Query CPU information."""
@@ -40,7 +41,9 @@ def register_system(mcp: FastMCP, *, read_only: bool) -> None:
         return
 
     @mcp.tool(name="hd_msr_write", annotations=DESTRUCTIVE)
-    async def hd_msr_write(msr_id: int, value: str, ctx: Context, kernel_mode: bool = False) -> str:
+    async def hd_msr_write(
+        msr_id: int, value: str, ctx: Context, kernel_mode: bool = False
+    ) -> str | InputRequiredResult:
         """Write a Model-Specific Register (MSR); value is a 64-bit hex string."""
         cmd = f"wrmsr {msr_id:#x} {parse_addr(value):#x}"
         if kernel_mode:

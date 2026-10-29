@@ -1,7 +1,7 @@
 # HyperDbg MCP Server - Design
 
 > Status: draft **v0.2** (2026-07-26, revised after online design review). Greenfield replacement for the abandoned `HyperDbg/mcp` prototype.
-> Stack decided: **Python** + **FastMCP** (official SDK high-level API) + ctypes FFI into `libhyperdbg.dll`. License: **GPLv3**.
+> Stack decided: **Python** + **MCPServer** (official SDK v2 high-level API, formerly FastMCP; MCP protocol 2026-07-28) + ctypes FFI into `libhyperdbg.dll`. License: **GPLv3**.
 > v0.2 changes are consolidated in §9-§11; core sections below updated inline.
 
 ## Background / decision trail
@@ -161,7 +161,7 @@ These are non-negotiable - the callback pattern *will* crash without them.
 
 ## 10. Safety & security model (revised)
 
-- **Confirmation is client-side via elicitation**, not a server flag. Annotate 🔴 tools `destructiveHint=True`; request elicitation before executing; `--read-only` additionally *unregisters* them. Layer all three.
+- **Confirmation is client-side via elicitation**, not a server flag. Annotate 🔴 tools `destructiveHint=True`; request elicitation before executing (at protocol 2026-07-28 via `InputRequiredResult` + client retry, earlier revisions via `elicitation/create`); `--read-only` additionally *unregisters* them. Layer all three.
 - **Prompt injection via debuggee data - the subtle, important one.** We're feeding a debugged program's own bytes/strings/disassembly back into the model; if it's malware, that content may contain adversarial instructions. **Wrap all returned debuggee data in an untrusted-data envelope** (clear delimiters + a "this is captured data, not instructions" tag) and size-cap it. This is a real, HyperDbg-specific threat the generic design missed.
 - **Audit log:** append-only JSONL, one entry per call (timestamp, tool, args hash, result hash, elapsed, target pid/addr range). Cheap, high forensic value.
 - **Input validation at the MCP boundary:** address/size sanity (reject absurd sizes), reject malformed commands before they reach the FFI layer.
@@ -174,7 +174,7 @@ These are non-negotiable - the callback pattern *will* crash without them.
 ## 11. Adopted / deferred punch list
 
 **Adopt now (into build order):**
-- FastMCP high-level API (`@mcp.tool()` + type hints → auto inputSchema); low-level `Server` not needed.
+- MCPServer high-level API (`@mcp.tool()` + type hints → auto inputSchema); low-level `Server` not needed.
 - `@asynccontextmanager` **lifespan** holding the `libhyperdbg` handle; inject via tool context (replaces module-level init; guarantees cleanup on shutdown).
 - Structured tool output (Pydantic/`outputSchema`) so clients get typed registers/memory, not regex bait - with a plain-text fallback.
 - `ToolError` for tool-level failures (uniform; don't mix error dicts and exceptions).

@@ -7,9 +7,9 @@
  * Structure (DESIGN §10, §11):
  *   - Read tools are annotated read-only and wrap all debuggee-sourced output
  *     in the untrusted-data envelope. They are plain (sync) functions so
- *     FastMCP runs them in its worker-thread pool, off the event loop.
- *   - Confirmation-gated tools are async (ctx.elicit is async). Their blocking
- *     ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
+ *     MCPServer runs them in its worker-thread pool, off the event loop.
+ *   - Confirmation-gated tools are async (require_confirmation is async). Their
+ *     blocking ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
  *     is never frozen.
  *   - Any tool that can mutate the target (arbitrary command, breakpoints,
  *     memory/register/script writes) is registered ONLY when not --read-only.
@@ -18,24 +18,40 @@
 
 from __future__ import annotations
 
+import re
 from functools import partial
 from typing import TYPE_CHECKING
 
 import anyio
-from mcp.server.fastmcp import Context
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import Context
+from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import parse_addr
+from .toolkit import choose, parse_addr, require_confirmation, resolve_addr
 
 if TYPE_CHECKING:  # pragma: no cover
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from .server import AppContext
 
 _MAX_DISASM = 256
+_MAX_INSN_LEN = 15  # longest x86 instruction, in bytes
+# A disassembly line starts with its address: fffff802`79afd130 or 00401000.
+_INSN_LINE = re.compile(r"[0-9a-fA-F]{8}(?:`[0-9a-fA-F]{8})?\s")
+
+
+def _first_instructions(listing: str, count: int) -> str:
+    """Cut a `u` listing after `count` instruction lines (symbol labels kept)."""
+    lines, seen = [], 0
+    for line in listing.splitlines(keepends=True):
+        if _INSN_LINE.match(line):
+            if seen == count:
+                break
+            seen += 1
+        lines.append(line)
+    return "".join(lines)
 
 
 class RegisterDump(BaseModel):
@@ -48,27 +64,11 @@ class MemoryDump(BaseModel):
     hex: str = Field(description="Captured bytes, hex-encoded (untrusted-fenced)")
 
 
-class Confirm(BaseModel):
-    confirm: bool = Field(description="Proceed with this operation on the live target?")
-
-
 def _app(ctx: Context) -> AppContext:
     return ctx.request_context.lifespan_context
 
 
-async def _require_confirmation(ctx: Context, what: str) -> bool:
-    """Ask the client to confirm. Deny-by-default if elicitation is unavailable."""
-    try:
-        result = await ctx.elicit(
-            message=f"HyperDbg is a ring-0 debugger. Confirm: {what}", schema=Confirm
-        )
-    except Exception:
-        # Client doesn't advertise the elicitation capability, or it failed.
-        return False
-    return result.action == "accept" and bool(result.data and result.data.confirm)
-
-
-def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
+def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     """Register tools. Any target-mutating tool is skipped when read_only."""
 
     _RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
@@ -80,9 +80,13 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
     def hd_mem_read(
         address: str, size: int, ctx: Context, pid: int = 0, virtual: bool = True
     ) -> MemoryDump:
-        """Read `size` bytes of debuggee memory from `address` (hex string, e.g. 0xfffff800...)."""
+        """Read `size` bytes of debuggee memory from `address`.
+
+        `address` is hex/decimal (0xfffff800...) or a symbol such as
+        `nt!KdDebuggerEnabled` or `nt!PsLoadedModuleList+0x8` (needs symbols).
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         data = app.session.read_memory(addr, size, pid=pid, virtual=virtual)
         app.audit.record(
             "hd_mem_read", {"address": hex(addr), "size": size}, status="ok", target_pid=pid
@@ -116,12 +120,19 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return hex(value)
 
     @mcp.tool(name="hd_disasm", annotations=_RO)
-    def hd_disasm(address: str, ctx: Context, count: int = 16) -> str:
-        """Disassemble up to `count` instructions at `address` (hex string; read-only)."""
+    def hd_disasm(address: str, ctx: Context, count: int = 16, bits: int = 64) -> str:
+        """Disassemble up to `count` instructions at `address` (hex or symbol; read-only).
+
+        bits=32 decodes x86 (WoW64 / 32-bit) code instead of x64.
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         count = max(1, min(count, _MAX_DISASM))
-        out = app.session.run_command(f"u {hex(addr)} l {count:x}")
+        cmd = choose(str(bits), {"64": "u", "32": "u32"}, "bits")
+        # `l` is a length in bytes, not instructions: ask for the longest
+        # `count` instructions can be, then keep the first `count`.
+        out = app.session.run_command(f"{cmd} {hex(addr)} l {count * _MAX_INSN_LEN:x}")
+        out = _first_instructions(out, count)
         app.audit.record("hd_disasm", {"address": hex(addr), "count": count}, status="ok")
         return wrap_untrusted(out, "disassembly")
 
@@ -144,15 +155,21 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
     # ===== execution-control (no memory writes; allowed in read-only) ===== #
     @mcp.tool(name="hd_exec_continue", annotations=_STATE)
     def hd_exec_continue(ctx: Context) -> str:
-        """Continue (resume) the debuggee."""
+        """Resume the debuggee; returns at once while it keeps running.
+
+        Until it halts again (breakpoint, event, or hd_exec_pause) target tools
+        refuse with "debuggee is running"; hd_connection_status shows running=.
+        """
         app = _app(ctx)
-        app.session.continue_debuggee()
+        running = app.session.continue_debuggee()
         app.audit.record("hd_exec_continue", {}, status="ok")
+        if running:
+            return "Continued; the debuggee is running (halts on a breakpoint/event or pause)."
         return "Continued."
 
     @mcp.tool(name="hd_exec_pause", annotations=_STATE)
     def hd_exec_pause(ctx: Context) -> str:
-        """Pause (halt) the debuggee."""
+        """Halt a running debuggee and wait until it is halted (up to 10 s)."""
         app = _app(ctx)
         app.session.pause_debuggee()
         app.audit.record("hd_exec_pause", {}, status="ok")
@@ -171,10 +188,13 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
 
     # ===== target-mutating tools (NOT registered under --read-only) ======= #
     @mcp.tool(name="hd_exec_command", annotations=_DESTRUCTIVE)
-    async def hd_exec_command(command: str, ctx: Context) -> str:
+    async def hd_exec_command(command: str, ctx: Context) -> str | InputRequiredResult:
         """Run a raw HyperDbg CLI command (arbitrary; may modify the target)."""
         app = _app(ctx)
-        if not await _require_confirmation(ctx, f"run `{command}`"):
+        confirmed = await require_confirmation(ctx, f"run `{command}`")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_exec_command", {"command": command}, status="denied")
             return "Denied by user."
         try:
@@ -189,18 +209,23 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
     def hd_bp_set(address: str, ctx: Context, pid: int = 0, tid: int = 0, core: int = 0) -> str:
         """Set a breakpoint at `address` (hex string; patches the target; full mode only)."""
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         app.session.set_breakpoint(addr, pid=pid, tid=tid, core=core)
         app.audit.record("hd_bp_set", {"address": hex(addr)}, status="ok", target_pid=pid)
         return f"Breakpoint set at {hex(addr)}."
 
     @mcp.tool(name="hd_mem_write", annotations=_DESTRUCTIVE)
-    async def hd_mem_write(address: str, data_hex: str, ctx: Context, pid: int = 0) -> str:
+    async def hd_mem_write(
+        address: str, data_hex: str, ctx: Context, pid: int = 0
+    ) -> str | InputRequiredResult:
         """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string)."""
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         payload = bytes.fromhex(data_hex)
-        if not await _require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}"):
+        confirmed = await require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_mem_write", {"address": hex(addr)}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(
@@ -212,11 +237,14 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Wrote {len(payload)} bytes to {hex(addr)}."
 
     @mcp.tool(name="hd_reg_write", annotations=_DESTRUCTIVE)
-    async def hd_reg_write(name: str, value: str, ctx: Context) -> str:
+    async def hd_reg_write(name: str, value: str, ctx: Context) -> str | InputRequiredResult:
         """Write a value (hex string) to a single register."""
         app = _app(ctx)
         val = parse_addr(value)
-        if not await _require_confirmation(ctx, f"set {name} = {hex(val)}"):
+        confirmed = await require_confirmation(ctx, f"set {name} = {hex(val)}")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_reg_write", {"name": name}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(app.session.write_register, name, val)
@@ -224,10 +252,13 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Set {name} = {hex(val)}."
 
     @mcp.tool(name="hd_script_run", annotations=_DESTRUCTIVE)
-    async def hd_script_run(script: str, ctx: Context) -> str:
+    async def hd_script_run(script: str, ctx: Context) -> str | InputRequiredResult:
         """Run a HyperDbg script (Turing-complete; can modify target state)."""
         app = _app(ctx)
-        if not await _require_confirmation(ctx, "run a HyperDbg script"):
+        confirmed = await require_confirmation(ctx, "run a HyperDbg script")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_script_run", {}, status="denied")
             return "Denied by user."
         await anyio.to_thread.run_sync(app.session.run_script, script)

@@ -21,7 +21,9 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
+import sys
 import threading
 import time
 from ctypes import (
@@ -37,10 +39,14 @@ from ctypes import (
 )
 
 from . import ffi
-from .errors import HyperDbgError, NotConnectedError
+from .errors import HyperDbgError, NotConnectedError, PreconditionError
 from .safety import wrap_untrusted
 
 _log = logging.getLogger(__name__)
+
+# libhyperdbg's message when the previous hyperkd service is still marked for
+# deletion (see HyperDbgSession._install_kd_driver).
+_DRIVER_PENDING_DELETE = "not fully deleted"
 
 
 def _is_error_status(status: int) -> bool:
@@ -54,6 +60,110 @@ def _is_error_status(status: int) -> bool:
     return 0xC0000000 <= (status & 0xFFFFFFFF) <= 0xCFFFFFFF
 
 
+# libhyperdbg installs its console CTRL+C handler on the first interpreter call
+# (process-global, like the library itself); the console must not change after.
+_interpreter_used = False
+
+
+def _mark_interpreter_used() -> None:
+    global _interpreter_used
+    _interpreter_used = True
+
+
+def _console_is_private(k32) -> bool:
+    import ctypes
+
+    pids = (ctypes.c_uint32 * 8)()
+    return k32.GetConsoleProcessList(pids, 8) == 1
+
+
+def _ensure_private_console() -> None:
+    """Give this process a console of its own, hidden. Windows only; idempotent.
+
+    Pausing a serial/pipe debuggee means raising CTRL+BREAK, and that reaches
+    every process on the console (an MCP client's CREATE_NO_WINDOW console is
+    shared with the venv launcher chain; a terminal with the shell). It must run
+    BEFORE libhyperdbg installs its handler: AllocConsole drops every console
+    handler registered earlier. stdio is piped under MCP, so leaving is harmless.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    if _console_is_private(k32):
+        return
+    k32.FreeConsole()
+    if k32.AllocConsole():
+        hwnd = k32.GetConsoleWindow()
+        if hwnd:
+            ctypes.WinDLL("user32").ShowWindow(hwnd, 0)  # SW_HIDE
+
+
+def _console_break() -> None:
+    """Deliver CTRL+BREAK to this process only, so libhyperdbg's handler pauses the debuggee.
+
+    libhyperdbg's handler returns TRUE for it, so Python never sees the signal.
+    Refuses on a shared console rather than signal other processes.
+    """
+    if sys.platform != "win32":
+        raise HyperDbgError("pausing a serial/pipe debuggee needs Windows console events")
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    if not _console_is_private(k32):
+        raise HyperDbgError("cannot pause: this process shares its console with others")
+    # CTRL+BREAK, not CTRL+C: a process can inherit "ignore CTRL+C" from its
+    # parent, and libhyperdbg's handler treats both the same.
+    if not k32.GenerateConsoleCtrlEvent(1, 0):  # CTRL_BREAK_EVENT to this console
+        raise HyperDbgError(f"GenerateConsoleCtrlEvent failed (error {ctypes.get_last_error()})")
+
+
+def _pipe_hint(named_pipe: str) -> str:
+    """Why a named pipe can't be opened, in terms the caller can act on (Windows only).
+
+    A VM serial port backed by a pipe (VMware/Hyper-V) has a single instance,
+    so a second debugger gets ERROR_PIPE_BUSY instead of a connection.
+    """
+    if sys.platform != "win32":
+        return ""
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+    if k32.WaitNamedPipeW(named_pipe, 1):
+        return ""  # an instance is free now: the failure was further along the handshake
+    err = ctypes.get_last_error()
+    if err in (2, 3, 161):  # FILE_NOT_FOUND, PATH_NOT_FOUND, BAD_PATHNAME
+        return (
+            r"pipe not found: check the name (\\.\pipe\<name>) and that the VM is running "
+            "with a serial port backed by this pipe"
+        )
+    if err in (121, 231):  # SEM_TIMEOUT, PIPE_BUSY
+        return (
+            "pipe busy: another client already holds its only instance "
+            "(hyperdbg-cli, WinDbg or another hyperdbg-mcp); disconnect it first"
+        )
+    return f"pipe unavailable (Windows error {err})"
+
+
+def _wait_for_pipe(named_pipe: str, timeout: float = 3.0) -> None:
+    """Wait for a VM to re-create its pipe instance after a client closed it.
+
+    For ~0.2 s the pipe does not exist at all, and WaitNamedPipe returns at once
+    for a missing pipe instead of waiting, so poll it.
+    """
+    if sys.platform != "win32":
+        return
+    import ctypes
+
+    k32 = ctypes.WinDLL("kernel32")
+    k32.WaitNamedPipeW.argtypes = [ctypes.c_wchar_p, ctypes.c_uint32]
+    deadline = time.monotonic() + timeout
+    while not k32.WaitNamedPipeW(named_pipe, 50) and time.monotonic() < deadline:
+        time.sleep(0.05)
+
+
 class HyperDbgSession:
     """Owns the libhyperdbg handle and serializes access to it.
 
@@ -63,12 +173,22 @@ class HyperDbgSession:
     (see DESIGN §11).
     """
 
+    # How long load_vmm waits for a previous hyperkd service to finish deleting.
+    driver_reinstall_timeout = 15.0
+
     def __init__(self, dll: CDLL | None = None) -> None:
         self._dll = dll or ffi.load_libhyperdbg()
         self._output: queue.Queue[str] = queue.Queue()
         self._lock = threading.Lock()
         self._connected = False
         self._mode: str | None = None  # "local" | "remote"
+        # Remote debuggee resumed: libhyperdbg's continue blocks until the next
+        # halt, so it runs on this thread and the session refuses target calls.
+        self._run_thread: threading.Thread | None = None
+        # Debugger-Mode connect still waiting for the debuggee's handshake.
+        self._connect_thread: threading.Thread | None = None
+        self._connect_failure: BaseException | None = None
+        self._reattached = False  # last connect took over a debuggee instead of a handshake
         # Persistent reference - MUST outlive every callback invocation.
         self._text_cb = ffi.TextMessageCallback(self._on_text)
 
@@ -82,6 +202,11 @@ class HyperDbgSession:
     def mode(self) -> str | None:
         """'local', 'remote', or None when not attached."""
         return self._mode
+
+    @property
+    def is_running(self) -> bool:
+        """True while a remote debuggee runs (resumed and not yet halted again)."""
+        return self._run_thread is not None and self._run_thread.is_alive()
 
     # ----- lifecycle ------------------------------------------------------- #
     def connect(self) -> None:
@@ -97,44 +222,190 @@ class HyperDbgSession:
         _log.info("connected to local HyperDbg debugger (VMI mode)")
 
     def connect_remote_com(
-        self, port_name: str, baudrate: int = 115200, pause: bool = True
-    ) -> None:
+        self,
+        port_name: str,
+        baudrate: int = 115200,
+        pause: bool = True,
+        wait: float | None = None,
+        reattach: str = "auto",
+    ) -> bool:
         """Debugger Mode over a serial/COM port to a remote debuggee.
 
-        pause=True halts the debuggee on connect, giving a valid CPU context
-        for register/memory reads and stepping.
+        pause=True leaves the debuggee halted on connect, giving a valid CPU
+        context for register/memory reads and stepping. See _connect_debugger_mode
+        for `wait` and the return value, connect_remote_pipe for `reattach`.
         """
-        self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
-        ok = self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(
-            port_name.encode("utf-8"), int(baudrate), 1 if pause else 0
+        port, baud = port_name.encode("utf-8"), int(baudrate)
+        reattach_fn = getattr(self._dll, "hyperdbg_u_reattach_remote_debugger_using_com_port", None)
+        return self._connect_debugger_mode(
+            self._reattach_or_handshake(
+                lambda: reattach_fn(port, baud, 1),
+                lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_com_port(port, baud, 1),
+                use_reattach=reattach_fn is not None and reattach != "never",
+            ),
+            pause,
+            wait,
+            f"failed to connect over COM port {port_name!r} @ {baudrate}",
         )
-        if not ok:
-            raise HyperDbgError(f"failed to connect over COM port {port_name!r} @ {baudrate}")
-        self._mode = "remote"
-        self._connected = True
-        _log.info("connected to remote HyperDbg debuggee over %s", port_name)
 
-    def connect_remote_pipe(self, named_pipe: str, pause: bool = True) -> None:
-        """Debugger Mode over a named pipe to a remote debuggee."""
-        self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
-        ok = self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(
-            named_pipe.encode("utf-8"), 1 if pause else 0
+    def connect_remote_pipe(
+        self,
+        named_pipe: str,
+        pause: bool = True,
+        wait: float | None = None,
+        reattach: str = "auto",
+    ) -> bool:
+        """Debugger Mode over a named pipe to a remote debuggee (e.g. a VM serial port).
+
+        reattach (needs a libhyperdbg with `.debug remote ... reattach`): a
+        debuggee sends its handshake once per `.debug prepare`, so after its
+        debugger died (e.g. this server was restarted) only a takeover reaches it.
+        libhyperdbg's reattach takes a debuggee over or, if it is still waiting
+        for a debugger, finishes the handshake, telling the two apart from what
+        the debuggee sends - without closing the pipe, which would end a waiting
+        debuggee's `.debug prepare`. "auto"/"always" use it when the library
+        has it, then fall back to a plain handshake; "never" skips it.
+        """
+        name = named_pipe.encode("utf-8")
+        reattach_fn = getattr(
+            self._dll, "hyperdbg_u_reattach_remote_debugger_using_named_pipe", None
         )
-        if not ok:
-            raise HyperDbgError(f"failed to connect over named pipe {named_pipe!r}")
-        self._mode = "remote"
-        self._connected = True
+
+        return self._connect_debugger_mode(
+            self._reattach_or_handshake(
+                lambda: reattach_fn(name, 1),
+                lambda: self._dll.hyperdbg_u_connect_remote_debugger_using_named_pipe(name, 1),
+                use_reattach=reattach_fn is not None and reattach != "never",
+                after_failed_reattach=lambda: _wait_for_pipe(named_pipe),
+            ),
+            pause,
+            wait,
+            f"failed to connect over named pipe {named_pipe!r}",
+            lambda: _pipe_hint(named_pipe),
+        )
+
+    def _reattach_or_handshake(
+        self, reattach, handshake, *, use_reattach, after_failed_reattach=lambda: None
+    ):
+        """The connect step: take over the debuggee if asked to, else (or then) handshake.
+
+        Runs on the connect thread, so the takeover counts against hd_connect's
+        wait like the handshake itself.
+        """
+
+        def connect() -> int:
+            self._reattached = False
+            if use_reattach:
+                if reattach():
+                    # libhyperdbg's reattach also completes a plain handshake when
+                    # the debuggee was still waiting; only a takeover says this.
+                    self._reattached = "reattached to the debuggee" in self._peek()
+                    return 1
+                self._drain()  # the failed takeover's messages are not this connect's
+                after_failed_reattach()
+            return handshake()
+
+        return connect
+
+    @property
+    def reattached(self) -> bool:
+        """True if the current connection took over a debuggee left by an earlier debugger."""
+        return self._connected and self._reattached
+
+    @property
+    def is_connecting(self) -> bool:
+        """True while a Debugger-Mode connect waits for the debuggee's handshake."""
+        return self._connect_thread is not None and self._connect_thread.is_alive()
+
+    @property
+    def last_connect_error(self) -> str | None:
+        """Why the last background connect failed, if it did (cleared on the next one)."""
+        return None if self._connect_failure is None else str(self._connect_failure)
+
+    def _connect_debugger_mode(self, dll_connect, pause, wait, failure, hint=lambda: "") -> bool:
+        """Run a serial/pipe connect; True once connected, False if still waiting.
+
+        libhyperdbg blocks until the debuggee's handshake arrives, which takes
+        ~1 min on the first connect and never comes if the debuggee is still bound
+        to an earlier debugger (it sends its handshake once per `.debug prepare`).
+        With `wait` set, the connect runs on a daemon thread and this returns
+        after `wait` seconds at most; a late handshake still completes it.
+
+        Always connects with pause: with pause=0 libhyperdbg's connect does not
+        return while the debuggee runs (it waits for the next halt, like `g`). A
+        no-pause connect is that plus the non-blocking continue_debuggee().
+        """
+        if self.is_connecting:
+            raise PreconditionError(
+                "a connect is already waiting for the debuggee's handshake (hd_connection_status)"
+            )
+        self._prepare_remote()
+        self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
+        self._drain()
+        self._connect_failure = None
+
+        def run() -> None:
+            try:
+                if not dll_connect():
+                    self._connect_failure = self._connect_error(failure, hint())
+                    return
+                self._mode = "remote"
+                self._connected = True
+                _log.info("connected to remote HyperDbg debuggee")
+                if not pause:
+                    self.continue_debuggee()
+            except Exception as exc:  # surfaced via last_connect_error / the caller
+                self._connect_failure = exc
+
+        if wait is None:
+            run()
+        else:
+            self._connect_thread = threading.Thread(target=run, daemon=True)
+            self._connect_thread.start()
+            self._connect_thread.join(wait)
+            if self._connect_thread.is_alive():
+                return False
+        if self._connect_failure is not None:
+            raise self._connect_failure
+        return True
 
     def connect_remote_net(self, ip: str, port: str) -> None:
         """Debugger Mode over TCP to a remote debuggee."""
+        self._prepare_remote()
         self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
         ok = self._dll.hyperdbg_u_connect_remote_debugger(
             ip.encode("utf-8"), str(port).encode("utf-8")
         )
         if not ok:
-            raise HyperDbgError(f"failed to connect to remote debugger {ip}:{port}")
+            raise self._connect_error(f"failed to connect to remote debugger {ip}:{port}")
         self._mode = "remote"
         self._connected = True
+
+    def _prepare_remote(self) -> None:
+        """Before a Debugger-Mode connect: a private console, so pause can work."""
+        # Only for the real library (fakes must not touch the test runner's
+        # console), and only while libhyperdbg's CTRL+C handler is not yet
+        # installed - swapping the console would drop it.
+        if isinstance(self._dll, CDLL) and not _interpreter_used:
+            _ensure_private_console()
+
+    def _connect_error(self, message: str, hint: str = "") -> HyperDbgError:
+        """Build a connect failure that carries HyperDbg's own explanation.
+
+        libhyperdbg returns only FALSE; the reason is printed through the text
+        callback. In Debugger Mode part of it may come from the debuggee, so it
+        is fenced like any other untrusted output.
+        """
+        output = self._drain_settled()
+        if "already connected to remote machine" in output:
+            # libhyperdbg in *this* process is still attached, e.g. an earlier
+            # connect that completed after its tool call was given up on.
+            hint = "this server is already attached to a debuggee; use hd_disconnect first"
+        if hint:
+            message += f": {hint}"
+        if output.strip():
+            message += "\n" + wrap_untrusted(output, "connect-output")
+        return HyperDbgError(message)
 
     def close(self) -> None:
         """Graceful teardown. Idempotent.
@@ -156,12 +427,25 @@ class HyperDbgSession:
             self._dll.hyperdbg_u_unset_text_message_callback()
         except Exception:  # pragma: no cover - best-effort; fake dlls lack it
             pass
+        if mode == "local":
+            self._release_local_modules()
         if mode == "remote":
-            self._graceful_resume(timeout=2.0)
+            if not self.is_running:  # already resumed: a second continue is a no-op
+                self._graceful_resume(timeout=2.0)
+            self._run_thread = None
             try:
                 self._dll.hyperdbg_u_debug_close_remote_debugger()
             except Exception:  # pragma: no cover - best-effort
                 pass
+
+    def _release_local_modules(self) -> None:
+        """Best-effort unload of what a local session loaded, so the process can exit."""
+        try:
+            if self._dll.hyperdbg_u_is_any_module_loaded():
+                self._dll.hyperdbg_u_unload_vmm()  # 1 if no VMM: fine
+                self._dll.hyperdbg_u_unload_kd()
+        except Exception:  # pragma: no cover - best-effort; fake dlls lack them
+            pass
 
     def _graceful_resume(self, timeout: float) -> None:
         """Send continue so the debuggee isn't stranded, bounded by timeout.
@@ -188,28 +472,61 @@ class HyperDbgSession:
         """True if a HyperDbg module (e.g. the VMM) is already loaded."""
         return bool(self._dll.hyperdbg_u_is_any_module_loaded())
 
-    def load_vmm(self) -> int:
-        """Load the HyperDbg hypervisor (VMM).
+    def _module_op(self, what: str, *steps) -> None:
+        """Run libhyperdbg module calls in order; each returns 0 on success, 1 on failure."""
+        with self._lock:
+            self._drain()
+            for step in steps:
+                rc = int(step())
+                if rc != 0:
+                    raise self._connect_error(f"{what} failed (rc={rc})")
+
+    def _install_kd_driver(self) -> int:
+        """Install the kd driver, riding out a service still pending deletion.
+
+        Verified on hardware: the SCM keeps a deleted service until its last
+        handle closes, so a server started right after another one released the
+        driver (an MCP client's probe process, a reconnect, a restart) finds
+        hyperkd "not fully deleted" and libhyperdbg gives up at once. Retry
+        until the old instance is gone instead of failing the load.
+        """
+        deadline = time.monotonic() + self.driver_reinstall_timeout
+        while True:
+            rc = int(self._dll.hyperdbg_u_install_kd_driver())
+            if rc == 0 or time.monotonic() >= deadline:
+                return rc
+            if _DRIVER_PENDING_DELETE not in self._peek():
+                return rc
+            self._drain()  # this attempt's failure is not the caller's to report
+            time.sleep(0.5)
+
+    def load_vmm(self) -> None:
+        """Load the HyperDbg hypervisor (VMM), installing the kd driver first.
 
         CONSEQUENTIAL: this places the running OS under HyperDbg's hypervisor
         and requires driver loading (DSE off / test-signing). Not called
-        implicitly anywhere - the operator must invoke it deliberately.
+        implicitly anywhere - the operator must invoke it deliberately. Mirrors
+        the CLI's `load vmm`: hyperdbg_u_load_vmm alone fails without the driver.
         """
-        with self._lock:
-            return self._dll.hyperdbg_u_load_vmm()
+        self._module_op("load vmm", self._install_kd_driver, self._dll.hyperdbg_u_load_vmm)
 
-    def unload_vmm(self) -> int:
-        """Unload the HyperDbg hypervisor (VMM)."""
-        with self._lock:
-            return self._dll.hyperdbg_u_unload_vmm()
+    def unload_vmm(self) -> None:
+        """Unload the HyperDbg hypervisor (VMM) and the kd module, like the CLI's `unload vmm`.
 
-    def load_all_modules(self) -> int:
-        with self._lock:
-            return int(self._dll.hyperdbg_u_load_all_modules())
+        Unloading kd hands back the driver's pending IRPs; without it a
+        libhyperdbg thread stays blocked in the driver and the process can't exit.
+        """
+        self._module_op(
+            "unload vmm", self._dll.hyperdbg_u_unload_vmm, self._dll.hyperdbg_u_unload_kd
+        )
 
-    def unload_all_modules(self) -> int:
-        with self._lock:
-            return int(self._dll.hyperdbg_u_unload_all_modules())
+    def load_all_modules(self) -> None:
+        self._module_op(
+            "load all modules", self._install_kd_driver, self._dll.hyperdbg_u_load_all_modules
+        )
+
+    def unload_all_modules(self) -> None:
+        self._module_op("unload all modules", self._dll.hyperdbg_u_unload_all_modules)
 
     # ----- Batch B: simple SDK-typed operations ---------------------------- #
     def get_processor_vendor(self) -> str:
@@ -307,8 +624,19 @@ class HyperDbgSession:
         return int(pkt.SmiCount)
 
     def _require_connected(self) -> None:
+        # The connect thread itself may act on the fresh session (pause=False resume).
+        if self.is_connecting and threading.current_thread() is not self._connect_thread:
+            raise NotConnectedError(
+                "still connecting: waiting for the debuggee's handshake (hd_connection_status)"
+            )
         if not self._connected:
             raise NotConnectedError("HyperDbg session is not connected")
+        if self.is_running:
+            # A halted context is required; a DLL call now would block behind
+            # the running debuggee or act on stale state.
+            raise PreconditionError(
+                "debuggee is running: wait for a breakpoint/event to halt it, or hd_exec_pause"
+            )
 
     # ----- callback -------------------------------------------------------- #
     def _on_text(self, text: bytes) -> int:
@@ -328,6 +656,13 @@ class HyperDbgSession:
             except queue.Empty:
                 break
         return "".join(parts)
+
+    def _peek(self) -> str:
+        """The output queued so far, left in place for whoever drains it."""
+        text = self._drain()
+        if text:
+            self._output.put(text)
+        return text
 
     def _drain_settled(self, quiet_s: float = 0.02, max_s: float = 0.25) -> str:
         """Drain with a short quiescence window.
@@ -355,6 +690,7 @@ class HyperDbgSession:
         self._require_connected()
         with self._lock:
             self._drain()  # discard anything stale before we start
+            _mark_interpreter_used()
             status = self._dll.hyperdbg_u_run_command(command.encode("utf-8"))
             output = self._drain_settled()
         if _is_error_status(status):
@@ -395,6 +731,19 @@ class HyperDbgSession:
         with self._lock:
             self._dll.hyperdbg_u_write_target_register(reg_id, value)
 
+    def _target_pid(self, pid: int) -> int:
+        """The process a local (VMI) memory access defaults to, like the CLI.
+
+        hyperkd reads/writes in the context of the given pid; the CLI's d*/u*/e*
+        commands substitute their own process for pid 0 in VMI mode, but the
+        SDK exports don't. Passing 0 through made every local hd_mem_read fail
+        (verified on hardware). Kernel addresses read the same from any process.
+        In Debugger Mode the debuggee uses its halted context and pid stays 0.
+        """
+        if pid == 0 and self._mode == "local":
+            return os.getpid()
+        return pid
+
     def read_memory(
         self,
         address: int,
@@ -414,7 +763,7 @@ class HyperDbgSession:
                 c_uint64(address),
                 mem_type,
                 ffi.ReadingType.FROM_VMX_ROOT,
-                c_uint32(pid),
+                c_uint32(self._target_pid(pid)),
                 c_uint32(size),
                 c_ubyte(0),  # get_address_mode = false
                 None,  # address_mode out (unused)
@@ -436,7 +785,7 @@ class HyperDbgSession:
             self._dll.hyperdbg_u_write_memory(
                 c_void_p(address),
                 mem_type,
-                c_uint32(pid),
+                c_uint32(self._target_pid(pid)),
                 cast(buf, c_void_p),
                 c_uint32(len(data)),
             )
@@ -446,15 +795,46 @@ class HyperDbgSession:
         with self._lock:
             self._dll.hyperdbg_u_set_breakpoint(address, pid, tid, core)
 
-    def continue_debuggee(self) -> None:
-        self._require_connected()
-        with self._lock:
-            self._dll.hyperdbg_u_continue_debuggee()
+    def continue_debuggee(self) -> bool:
+        """Resume the debuggee. Returns True if it is still running afterwards.
 
-    def pause_debuggee(self) -> None:
+        In Debugger Mode libhyperdbg's continue blocks until the debuggee halts
+        again (breakpoint, event, pause) - like `g` in the CLI - so it runs on a
+        daemon thread and this returns at once. Local VMI continue returns.
+        """
         self._require_connected()
-        with self._lock:
-            self._dll.hyperdbg_u_pause_debuggee()
+        if self._mode != "remote":
+            with self._lock:
+                self._dll.hyperdbg_u_continue_debuggee()
+            return False
+        t = threading.Thread(target=self._dll.hyperdbg_u_continue_debuggee, daemon=True)
+        self._run_thread = t
+        t.start()
+        t.join(0.3)  # an immediate halt (e.g. a bp at the current rip) shows up here
+        return t.is_alive()
+
+    def pause_debuggee(self, timeout: float = 10.0) -> None:
+        """Halt the debuggee and wait until libhyperdbg reports it halted."""
+        if not self._connected:
+            raise NotConnectedError("HyperDbg session is not connected")
+        if self._mode != "remote" or not self.is_running:
+            with self._lock:
+                self._dll.hyperdbg_u_pause_debuggee()
+            return
+        # hyperdbg_u_pause_debuggee is a no-op over serial/pipe (it only handles
+        # `.connect` and user-mode targets); the CLI pauses through its console
+        # CTRL+C handler, which libhyperdbg also installs in this process.
+        self._dll.hyperdbg_u_pause_debuggee()
+        self._run_thread.join(0.5)
+        if self.is_running:
+            # An empty command makes libhyperdbg install its CTRL+C handler if no
+            # command has run yet in this process (it does so on first use).
+            _mark_interpreter_used()
+            self._dll.hyperdbg_u_run_command(b"")
+            _console_break()
+            self._run_thread.join(timeout)
+        if self.is_running:
+            raise HyperDbgError(f"debuggee did not halt within {timeout:.0f}s")
 
     def step(self, mode: str = "over") -> None:
         self._require_connected()
@@ -472,9 +852,18 @@ class HyperDbgSession:
         self._require_connected()
         has_error = c_ubyte(0)
         with self._lock:
+            self._drain()
             value = self._dll.hyperdbg_u_eval_expression(expr.encode("utf-8"), byref(has_error))
+            output = self._drain()
         if has_error.value:
-            raise HyperDbgError(f"eval_expression({expr!r}) reported an error")
+            # An unknown symbol is the usual cause: say how to fix it, and keep
+            # HyperDbg's own explanation (fenced: it may echo target data).
+            raise HyperDbgError(
+                f"could not evaluate {expr!r}. If it names a symbol, make sure symbols "
+                "are loaded (hd_sym_path + hd_sym_reload)."
+                + (("\n" + wrap_untrusted(output, "eval-output")) if output.strip() else ""),
+                status_code=has_error.value,
+            )
         return value
 
     def run_script(self, script: str) -> None:
