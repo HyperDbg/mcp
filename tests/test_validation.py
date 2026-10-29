@@ -37,6 +37,10 @@ class RecordingSession:
 
     def run_command(self, command):
         self.commands.append(command)
+        if command.startswith("rdmsr"):  # TSC_AUX = 5 on core 0 and 1
+            core = command.split(" core ")[1] if " core " in command else None
+            cores = [core] if core else ["0x0", "0x1"]
+            return "".join(f"core : {c} - msr[c0000103] = 00000000`00000005\n" for c in cores)
         return f"ok:{command}"
 
 
@@ -290,3 +294,102 @@ async def test_gated_tool_failure_is_a_tool_error(tmp_path):
     async with Client(srv) as client:
         result = await client.call_tool("hd_process_switch", {"pid": 4})
     assert result.is_error and "Debugger Mode" in _text(result)
+
+
+async def _call_confirmed(tmp_path, tool, args):
+    srv, session = _build(tmp_path)
+    asked: list[str] = []
+
+    async def accept(_context, params):
+        asked.append(params.message)
+        return ElicitResult(action="accept", content={"confirm": True})
+
+    async with Client(srv, elicitation_callback=accept) as client:
+        result = await client.call_tool(tool, args)
+    return result, session, asked
+
+
+async def test_per_core_msr_needs_a_core(tmp_path):
+    # GS base on every core = every core on one KPCR: refused before any write
+    result, session, _ = await _call_confirmed(
+        tmp_path, "hd_msr_write", {"msr_id": "0xC0000101", "value": "0x0"}
+    )
+    assert result.is_error and "every core" in _text(result)
+    assert not any(c.startswith("wrmsr") for c in session.commands)
+
+
+async def test_critical_msr_write_shows_the_current_value(tmp_path):
+    result, session, asked = await _call_confirmed(
+        tmp_path, "hd_msr_write", {"msr_id": "0xC0000103", "value": "0x7", "core": 1}
+    )
+    assert not result.is_error
+    assert "IA32_TSC_AUX" in asked[0] and "now 0x5" in asked[0] and "CRITICAL" in asked[0]
+    # read again when the confirmed call is retried: the write uses a fresh value
+    assert set(session.commands[:-1]) == {"rdmsr 0xc0000103 core 0x1"}
+    assert session.commands[-1] == "wrmsr 0xc0000103 0x7 core 0x1"
+
+
+async def test_msr_compare_and_write(tmp_path):
+    stale, session, _ = await _call_confirmed(
+        tmp_path,
+        "hd_msr_write",
+        {"msr_id": "0xC0000103", "value": "0x5", "core": 0, "expected_current": "0x4"},
+    )
+    assert stale.is_error and "no longer holds 0x4" in _text(stale)
+    assert not any(c.startswith("wrmsr") for c in session.commands)
+
+    same, _, asked = await _call_confirmed(
+        tmp_path,
+        "hd_msr_write",
+        {"msr_id": "0xC0000103", "value": "0x5", "core": 0, "expected_current": "0x5"},
+    )
+    assert not same.is_error and "the value it already holds" in asked[0]
+
+
+def test_msr_values_parse_backticked_output():
+    from hyperdbg_mcp.tools_system import _parse_msr_values
+
+    out = (
+        "core : 0x0 - msr[c0000082] = fffff800`df2c1840\n"
+        "core : 0x1 - msr[c0000082] = fffff800`df2c1840\n"
+    )
+    assert _parse_msr_values(out) == {0: 0xFFFFF800DF2C1840, 1: 0xFFFFF800DF2C1840}
+
+
+async def test_memory_compare_and_write(tmp_path):
+    from hyperdbg_mcp.mock import MockSession
+
+    session = MockSession()
+    session.connect()
+    srv = server.build_server(
+        read_only=False,
+        lib_path=None,
+        audit_path=str(tmp_path / "audit.jsonl"),
+        session_factory=lambda: session,
+    )
+
+    async def accept(_context, _params):
+        return ElicitResult(action="accept", content={"confirm": True})
+
+    async with Client(srv, elicitation_callback=accept) as client:
+        # the mock reads (address + i) & 0xff: 0x1000 holds 00 01 02 03
+        stale = await client.call_tool(
+            "hd_mem_write",
+            {"address": "0x1000", "data_hex": "90909090", "expected_current": "cccccccc"},
+        )
+        assert stale.is_error and "no longer holds cccccccc" in _text(stale)
+        assert session._mem == {}
+        ok = await client.call_tool(
+            "hd_mem_write",
+            {"address": "0x1000", "data_hex": "90909090", "expected_current": "00010203"},
+        )
+        assert not ok.is_error and session._mem[0x1000] == 0x90
+
+
+@pytest.mark.parametrize("msr", ["0xC0000100", "0xC0000102"])
+async def test_thread_context_msrs_are_refused(tmp_path, msr):
+    result, session, _ = await _call_confirmed(
+        tmp_path, "hd_msr_write", {"msr_id": msr, "value": "0x0", "core": 0}
+    )
+    assert result.is_error and "context switch" in _text(result)
+    assert session.commands == []

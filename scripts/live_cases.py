@@ -172,10 +172,20 @@ def cases() -> list[Case]:
     add("events", "user-thread-list", "hd_user_thread_switch", {}, "any")
 
     # ----- writes ---------------------------------------------------------- #
-    add("write", "mem-write-roundtrip", "hd_mem_write", {"address": QUERY_PC, "data_hex": "echo"}, "any", note="reads 8 bytes, writes them back unchanged")
+    add("write", "mem-write-roundtrip", "hd_mem_write", {"address": QUERY_PC, "data_hex": "echo"}, "ok", note="reads 16 bytes of kernel code, writes them back with compare-and-write")
+    add("write", "mem-write-stale", "hd_mem_write", {"address": QUERY_PC, "data_hex": "90909090", "expected_current": "cccccccc"}, "error", "nothing written")
     add("write", "mem-edit-roundtrip", "hd_mem_edit", {"address": QUERY_PC, "value": "0x48", "fmt": "byte"}, "any")
     add("write", "reg-write", "hd_reg_write", {"name": "rip", "value": "0x140000000"}, "any", note="needs a halted context")
-    add("write", "msr-write", "hd_msr_write", {"msr_id": "0xC0000082", "value": "echo"}, "any", note="reads LSTAR, writes it back; --dangerous only", dangerous=True)
+    # MSR writes: every core is read, then written back with compare-and-write, so
+    # a wrong parse can only fail the case, never change a register.
+    add("write", "msr-echo-lstar", "hd_msr_write", {"msr_id": "0xC0000082", "value": "echo"}, "ok", note="LSTAR on every core", dangerous=True)
+    add("write", "msr-echo-tsc-aux", "hd_msr_write", {"msr_id": "0xC0000103", "value": "echo"}, "ok", note="per-core TSC_AUX", dangerous=True)
+    add("write", "msr-echo-gs-base", "hd_msr_write", {"msr_id": "0xC0000101", "value": "echo"}, "ok", note="per-core GS base (the KPCR)", dangerous=True)
+    add("write", "msr-kernel-gs-refused", "hd_msr_write", {"msr_id": "0xC0000102", "value": "0x0", "core": 0}, "error", "context switch", note="the running thread's value: refused")
+    add("write", "msr-echo-efer", "hd_msr_write", {"msr_id": "0xC0000080", "value": "echo"}, "ok", note="EFER on every core", dangerous=True)
+    add("write", "msr-echo-pat", "hd_msr_write", {"msr_id": "0x277", "value": "echo"}, "ok", note="PAT on every core", dangerous=True)
+    add("write", "msr-gs-all-cores", "hd_msr_write", {"msr_id": "0xC0000101", "value": "0x0"}, "error", "every core", note="refused before any write")
+    add("write", "msr-stale", "hd_msr_write", {"msr_id": "0xC0000082", "value": "0x0", "core": 0, "expected_current": "0x1"}, "error", "nothing written", note="LSTAR=0 if the guard failed: refused")
     add("write", "pagein", "hd_pagein", {"address": QUERY_PC}, "error", "debugger mode")
     add("write", "bp-set", "hd_bp_set", {"address": "nt!NtClose"}, "error", "debugger mode")
     add("write", "bp-modify", "hd_bp_modify", {"breakpoint_id": 0, "action": "disable"}, "any")
@@ -254,6 +264,34 @@ async def call(session: ClientSession, name: str, args: dict, timeout: float = 9
     return bool(res.is_error), text
 
 
+_MSR_LINE = re.compile(r"core\s*:\s*(0x[0-9a-fA-F]+|\d+)\s*-\s*msr\[[0-9a-fA-F]+\]\s*=\s*([0-9a-fA-F`]+)")
+_HEX_LINE = re.compile(r"(?<![0-9a-fA-Fx])([0-9a-fA-F]{2,})(?![0-9a-fA-F])")
+
+
+async def expand(session: ClientSession, case: Case, timeout: float) -> list[dict]:
+    """The calls a case makes. "echo" values are read from the target first and
+    written back with expected_current, so the server refuses the write unless
+    the register / memory still holds exactly what is being written."""
+    args = dict(case.args)
+    if case.tool == "hd_msr_write" and args.get("value") == "echo":
+        _, out = await call(session, "hd_msr_read", {"msr_id": args["msr_id"]}, timeout)
+        per_core = {int(c, 0): v.replace("`", "") for c, v in _MSR_LINE.findall(out)}
+        if not per_core:
+            raise RuntimeError(f"no per-core values in: {out[:120]}")
+        return [
+            {"msr_id": args["msr_id"], "value": "0x" + v, "core": core, "expected_current": "0x" + v}
+            for core, v in sorted(per_core.items())
+        ]
+    if case.tool == "hd_mem_write" and args.get("data_hex") == "echo":
+        size = 16
+        _, out = await call(session, "hd_mem_read", {"address": args["address"], "size": size}, timeout)
+        runs = [r for r in _HEX_LINE.findall(out) if len(r) == 2 * size]
+        if len(runs) != 1:
+            raise RuntimeError(f"expected one {size}-byte hex run in: {out[:160]}")
+        return [{**args, "data_hex": runs[0], "expected_current": runs[0]}]
+    return [args]
+
+
 async def run(args) -> int:
     cfg = {"url": args.url, "headers": {}}
     if args.config:
@@ -314,34 +352,23 @@ async def run(args) -> int:
                     if case.dangerous and not args.dangerous:
                         results.append(Result(case, "SKIP", "dangerous: pass --dangerous"))
                         continue
-                    call_args = dict(case.args)
-                    if "echo" in call_args.values() and case.tool in ("hd_mem_write", "hd_msr_write"):
-                        # Never invent a value: write back what is there now, so the
-                        # case exercises the write path without changing the system
-                        # (a wrong MSR write, e.g. LSTAR=0, bugchecks the machine).
-                        try:
-                            if case.tool == "hd_msr_write":
-                                _, cur = await call(session, "hd_msr_read", {"msr_id": call_args["msr_id"]}, args.timeout)
-                                digits = [w for w in cur.replace("0x", " ").split() if all(ch in "0123456789abcdefABCDEF" for ch in w) and len(w) >= 4]
-                                call_args["value"] = "0x" + digits[-1] if digits else "0x0"
-                            else:
-                                _, cur = await call(session, "hd_mem_read", {"address": call_args["address"], "size": 8}, args.timeout)
-                                found = re.search(r'"hex":\s*"([0-9a-fA-F]+)"', cur)
-                                if not found:
-                                    run = re.findall(r"[0-9a-fA-F]{16,}", cur)
-                                    found = None
-                                    hexstr = run[-1] if run else ""
-                                else:
-                                    hexstr = found.group(1)
-                                call_args["data_hex"] = hexstr[:16]
-                        except Exception as exc:  # noqa: BLE001
-                            results.append(Result(case, "SKIP", f"echo failed: {exc}"))
-                            continue
                     try:
-                        is_err, text = await call(session, case.tool, call_args, args.timeout)
+                        calls = await expand(session, case, args.timeout)
+                    except Exception as exc:  # noqa: BLE001
+                        results.append(Result(case, "FAIL", f"echo read failed: {exc}"))
+                        continue
+                    is_err, texts = False, []
+                    try:
+                        for call_args in calls:
+                            one_err, one_text = await call(session, case.tool, call_args, args.timeout)
+                            is_err = is_err or one_err
+                            texts.append(one_text)
                     except Exception as exc:  # noqa: BLE001 - report and continue
                         results.append(Result(case, "FAIL", f"{type(exc).__name__}: {exc}"))
                         continue
+                    text = " | ".join(texts)
+                    if len(calls) > 1:
+                        text = f"[{len(calls)} calls] " + text
 
                     if case.expect == "ok":
                         good = not is_err

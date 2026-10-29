@@ -229,13 +229,38 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_mem_write", annotations=_DESTRUCTIVE)
     async def hd_mem_write(
-        address: str, data_hex: str, ctx: Context, pid: int = 0
+        address: str, data_hex: str, ctx: Context, pid: int = 0, expected_current: str = ""
     ) -> str | InputRequiredResult:
-        """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string)."""
+        """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string).
+
+        expected_current (hex, same length as data_hex) writes only if memory
+        still holds those bytes: a compare-and-write, so a patch computed from an
+        earlier read can't land on code or data that changed since.
+        """
         app = _app(ctx)
         addr = resolve_addr(ctx, address)
-        payload = bytes.fromhex(data_hex)
-        confirmed = await require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}")
+        try:
+            payload = bytes.fromhex(data_hex)
+            expected = bytes.fromhex(expected_current) if expected_current else None
+        except ValueError as exc:
+            raise HyperDbgError(f"invalid hex: {exc}") from None
+        if not payload:
+            raise HyperDbgError("data_hex is empty")
+        what = f"write {len(payload)} bytes to {hex(addr)}"
+        if expected is not None:
+            if len(expected) != len(payload):
+                raise HyperDbgError("expected_current must be as long as data_hex")
+            current = await anyio.to_thread.run_sync(
+                partial(app.session.read_memory, addr, len(payload), pid=pid)
+            )
+            if current != expected:
+                raise HyperDbgError(
+                    f"memory at {hex(addr)} no longer holds {expected.hex()} "
+                    f"(now {current.hex()}); nothing written"
+                )
+            if current == payload:
+                what += " (the bytes it already holds)"
+        confirmed = await require_confirmation(ctx, what)
         if isinstance(confirmed, InputRequiredResult):
             return confirmed
         if not confirmed:
