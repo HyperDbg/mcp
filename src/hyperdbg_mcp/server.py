@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -128,6 +129,22 @@ def main() -> None:
         ),
     )
     parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help=(
+            "stdio (default): one session per client process. http: a long-lived "
+            "Streamable HTTP server at /mcp that keeps the debugger session across "
+            "client reconnects; requires a bearer token in $HYPERDBG_MCP_TOKEN."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Address to bind with --transport http (default: loopback only).",
+    )
+    parser.add_argument("--port", type=int, default=8765, help="Port for --transport http.")
+    parser.add_argument(
         "--lib-path",
         default=None,
         help="Path to libhyperdbg.dll (else HYPERDBG_LIB_PATH / default search).",
@@ -192,7 +209,13 @@ def main() -> None:
         connect=connect,
         assume_consent=args.assume_consent,
     )
-    server.run()  # stdio transport by default
+    if args.transport == "http":
+        from .transport_http import TOKEN_ENV, check_token, serve_http
+
+        token = check_token(os.environ.get(TOKEN_ENV))
+        serve_http(server, host=args.host, port=args.port, token=token)
+    else:
+        server.run()  # stdio
 
 
 if __name__ == "__main__":
