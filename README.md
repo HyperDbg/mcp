@@ -5,8 +5,10 @@ An [MCP](https://modelcontextprotocol.io) server that exposes [HyperDbg](https:/
 
 > **Status:** early development (v0.0.1). The design is documented in
 > [`docs/DESIGN.md`](docs/DESIGN.md). End-to-end operation requires a Windows host with
-> HyperDbg installed and its driver loaded; the FFI layer has not yet been validated
-> against a live `libhyperdbg.dll`.
+> HyperDbg installed and its driver loaded. The FFI layer is validated against a live
+> `libhyperdbg.dll` from HyperDbg v0.25.0 (local VMI mode: VMM load/unload, symbols, memory
+> reads, disassembly), and `tests/test_ffi_signatures.py` checks every ctypes prototype
+> against that release's SDK header.
 
 ## How it works
 
@@ -66,6 +68,11 @@ APIC/IDT/SMI, and `.pe`. Free-text arguments must be a single token and event sc
 are checked against HyperDbg's `{}` tokenizer, so a value can't smuggle in extra options;
 confirmations show the exact command that will run.
 
+Address arguments take hex/decimal or a symbol with optional offsets
+(`nt!KdDebuggerEnabled`, `nt!PsLoadedModuleList+0x8`, `@rip-10`), resolved through
+HyperDbg's symbols (load them with `hd_sym_path` + `hd_sym_reload`). Nothing else is
+passed to the script engine, so read-only tools stay read-only.
+
 Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
 (the client retries the call with the answer); older revisions use `elicitation/create`.
 
@@ -79,7 +86,7 @@ ruff check .
 
 ## Roadmap
 
-- Validate FFI against a live HyperDbg host.
+- Validate Debugger Mode (serial / pipe / net) end-to-end against v0.25.0.
 - Streamable-HTTP transport + progress streaming for long Intel-PT / LBR traces.
 - Symbol-aware helpers; richer structured outputs.
 
