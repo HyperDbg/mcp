@@ -203,9 +203,11 @@ def _reports_failure(output: str) -> bool:
 _FAILURE_HINTS = (
     (
         "demand paging",
-        "The page is not resident in the target, so HyperDbg cannot hook it yet: let "
-        "the debuggee execute that code once (continue, then pause) and set the hook "
-        "again. '.pagein' would force it, but it exists only in Debugger Mode.",
+        "HyperDbg could not translate that address in the page tables it checks: a "
+        "user-mode address that is not resident (or belongs to another process while "
+        "VMI mode looks at the caller) fails this way. Let the debuggee run that code "
+        "once and retry, or hook the kernel-side function (nt!...) instead; '.pagein' "
+        "exists only in Debugger Mode.",
     ),
     (
         "only valid if you connected to a debuggee in debugger-mode",
@@ -222,6 +224,13 @@ _FAILURE_HINTS = (
 def _failure_hint(output: str) -> str:
     """Turn the usual HyperDbg dead ends into what to do instead."""
     low = output.lower()
+    if "exclude it from this release" in low:
+        return (
+            "This libhyperdbg was built with the user-mode debugger disabled "
+            "(ActivateUserModeDebugger FALSE): .start/.attach do nothing. Rebuild "
+            "HyperDbg with include/config/Configuration.h: ActivateUserModeDebugger TRUE, "
+            "or use Debugger Mode."
+        )
     for marker, hint in _FAILURE_HINTS:
         if marker in low:
             return hint

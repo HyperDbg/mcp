@@ -137,6 +137,11 @@ def register_debugger(mcp: MCPServer, *, read_only: bool) -> None:
             return f"output source {name!r} is already open"
         if state == "closed" and what == "close":
             return f"output source {name!r} is already closed"
+        if state == "closed" and what == "open":
+            raise HyperDbgError(
+                f"output source {name!r} is closed and HyperDbg cannot reopen it: create a "
+                "new source with hd_output_create (a different name) and open that"
+            )
         cmd = f"output {what} {name}"
         return await run_text_confirmed(
             ctx,
