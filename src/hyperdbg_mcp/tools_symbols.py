@@ -63,9 +63,15 @@ def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_sym_path", annotations=STATE)
     def hd_sym_path(path: str, ctx: Context) -> str:
-        """Set symbol search path."""
+        """Set symbol search path.
+
+        Remembered: a VMM (re)load drops the symbol tables, so hd_vmm_load
+        re-applies this path and reloads symbols by itself.
+        """
         cmd = f".sympath {token(path, 'path')}"
-        return run_text(ctx, cmd, audit="hd_sym_path", kind="symbols", args={"path": path})
+        out = run_text(ctx, cmd, audit="hd_sym_path", kind="symbols", args={"path": path})
+        app_ctx(ctx).session.symbol_path = path
+        return out
 
     @mcp.tool(name="hd_sym_reload", annotations=STATE)
     def hd_sym_reload(ctx: Context) -> str:

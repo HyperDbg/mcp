@@ -262,6 +262,8 @@ class HyperDbgSession:
         self._connect_thread: threading.Thread | None = None
         self._connect_failure: BaseException | None = None
         self._reattached = False  # last connect took over a debuggee instead of a handshake
+        # Symbol path to re-apply after a VMM (re)load; set by hd_sym_path.
+        self.symbol_path: str = ""
         # Persistent reference - MUST outlive every callback invocation.
         self._text_cb = ffi.TextMessageCallback(self._on_text)
 
@@ -592,6 +594,21 @@ class HyperDbgSession:
         """
         self._module_op("load vmm", self._install_kd_driver, self._dll.hyperdbg_u_load_vmm)
         self._attach_local()
+        self._restore_symbols()
+
+    def _restore_symbols(self) -> None:
+        """Reload symbols after a VMM load: the tables do not survive it.
+
+        Every address argument resolves through them, so without this the first
+        tool call after a reload fails with a syntax error from the evaluator.
+        """
+        if not self.symbol_path:
+            return
+        try:
+            self.run_command(f".sympath {self.symbol_path}")
+            self.run_command(".sym reload")
+        except HyperDbgError as exc:
+            _log.info("could not restore symbols after the VMM load: %s", exc)
 
     def _attach_local(self) -> None:
         """After loading the VMM here, debug this machine (local VMI mode).
