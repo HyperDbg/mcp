@@ -851,6 +851,12 @@ class HyperDbgSession:
             _mark_interpreter_used()
             status = self._dll.hyperdbg_u_run_command(command.encode("utf-8"))
             output = self._drain_settled()
+        if not _is_error_status(status):
+            # The event forwarder complains asynchronously when a source it writes
+            # to disappears; that is noise for the command the caller ran.
+            output = "\n".join(
+                line for line in output.splitlines() if not line.startswith(_ASYNC_ERRORS)
+            )
         if _is_error_status(status) or _reports_failure(output):
             # Debuggee output is attacker-controlled even on failure; fence it
             # so it can never reach the model as unmarked text (review H2).
