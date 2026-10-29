@@ -17,8 +17,42 @@ of MCP tools that map to HyperDbg's command surface. Command text output is capt
 HyperDbg's message callback (see [`docs/DESIGN.md`](docs/DESIGN.md) §2).
 
 ```
-MCP client ──stdio──► hyperdbg-mcp (Python) ──ctypes──► libhyperdbg.dll ──► driver + VMM
+MCP client ──stdio / Streamable HTTP──► hyperdbg-mcp (Python) ──ctypes──► libhyperdbg.dll ──► driver + VMM
 ```
+
+## Transports
+
+The server runs on the Windows host next to the driver; the MCP client can live elsewhere.
+
+**stdio** (default) - one server per client process; the debugger session ends with it.
+From another machine, bridge it over SSH (`-T`: no TTY, so the JSON-RPC stream stays clean):
+
+```yaml
+command: ssh
+args: ["-T", "-o", "BatchMode=yes", "user@windows-host",
+       "C:\\hyperdbg-mcp\\.venv\\Scripts\\hyperdbg-mcp.exe --lib-path C:\\HyperDbg\\libhyperdbg.dll"]
+```
+
+**Streamable HTTP** (`--transport http`) - one long-lived server at `/mcp` whose debugger
+session (loaded VMM, symbols, a halted debuggee) outlives client restarts and reconnects.
+It always requires a bearer token in `$HYPERDBG_MCP_TOKEN` (32+ characters; requests without
+it get 401) and binds `127.0.0.1:8765` by default. Reach it from another machine through an
+SSH tunnel rather than binding a LAN address:
+
+```powershell
+# Windows host, as Administrator: token file readable by Administrators only
+scripts\windows\start-http.ps1 -TokenFile C:\ProgramData\hyperdbg-mcp\token `
+    --lib-path C:\HyperDbg\libhyperdbg.dll --audit-log C:\ProgramData\hyperdbg-mcp\audit.jsonl
+```
+
+```bash
+# client machine
+ssh -N -L 8765:127.0.0.1:8765 user@windows-host
+# MCP client: url http://127.0.0.1:8765/mcp, header "Authorization: Bearer <token>"
+```
+
+Start it from a scheduled task (or another service host) rather than an SSH session:
+Windows' sshd ends every process of a session when the session closes.
 
 ## Safety
 
@@ -92,7 +126,7 @@ ruff check .
 ## Roadmap
 
 - Validate Debugger Mode (serial / pipe / net) end-to-end against v0.25.0.
-- Streamable-HTTP transport + progress streaming for long Intel-PT / LBR traces.
+- Progress streaming for long Intel-PT / LBR traces.
 - Symbol-aware helpers; richer structured outputs.
 
 ## License
