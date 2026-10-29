@@ -56,8 +56,9 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
         """Step until the current function returns (gu / go-up).
 
         Steps over calls; stops after the `ret`, or after max_steps steps
-        (0 = HyperDbg's default). If the thread never gets there (it blocks or
-        exits), hd_exec_pause interrupts the wait.
+        (0 = HyperDbg's default). If the thread never gets there (it blocks in
+        the kernel or the process exits), the wait has no end: hd_exec_pause may
+        interrupt it, otherwise the session has to be restarted.
         """
         app = app_ctx(ctx)
         out = app.session.step_out(max_steps)
@@ -184,6 +185,10 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
         stopped at the entry point, the int3 there can stay in the image's shared
         page, and every later instance of that program crashes (0x80000003) until
         the original byte is written back (hd_mem_edit, physical).
+
+        The entry pause sits in the process's start-up path: set breakpoints and
+        hd_exec_continue from there. Stepping from it executes that synthetic
+        state and the process faults in ntdll.
         """
         return await _gated(
             ctx,

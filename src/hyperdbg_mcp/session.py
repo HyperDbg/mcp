@@ -26,6 +26,7 @@ import queue
 import sys
 import threading
 import time
+from contextlib import contextmanager
 from ctypes import (
     CDLL,
     POINTER,
@@ -98,6 +99,10 @@ def _ensure_private_console() -> None:
         hwnd = k32.GetConsoleWindow()
         if hwnd:
             ctypes.WinDLL("user32").ShowWindow(hwnd, 0)  # SW_HIDE
+
+
+#: How long a tool waits for another command before it reports the session busy.
+_OPS_TIMEOUT_S = 60.0
 
 
 def _console_break() -> None:
@@ -246,6 +251,12 @@ class HyperDbgSession:
 
     def connect_local(self) -> None:
         """Local VMI mode (single machine; debug via the local hypervisor)."""
+        # Before the first command (libhyperdbg installs its CTRL+C handler on
+        # first use, and swapping the console would drop it): pausing a stepping
+        # user-mode thread needs a console to raise CTRL+BREAK on, see
+        # pause_debuggee.
+        if isinstance(self._dll, CDLL) and not _interpreter_used:
+            _ensure_private_console()
         self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
         self._dll.hyperdbg_u_connect_local_debugger()
         self._mode = "local"
@@ -506,7 +517,7 @@ class HyperDbgSession:
 
     def _module_op(self, what: str, *steps) -> None:
         """Run libhyperdbg module calls in order; each returns 0 on success, 1 on failure."""
-        with self._lock:
+        with self._ops():
             # Before any connect too: the reason for a failure is only printed.
             self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
             self._drain()
@@ -581,7 +592,7 @@ class HyperDbgSession:
 
     def get_kernel_base(self) -> int:
         self._require_connected()
-        with self._lock:
+        with self._ops():
             return int(self._dll.hyperdbg_u_get_kernel_base())
 
     def enable_transparent_mode(
@@ -593,7 +604,7 @@ class HyperDbgSession:
             raise HyperDbgError("give exactly one of pid or name (the process to hide from)")
         self._require_connected()
         name_b = name.encode("utf-8") if name else None
-        with self._lock:
+        with self._ops():
             self._drain()
             ok = self._dll.hyperdbg_u_enable_transparent_mode_ex(
                 c_uint32(pid), name_b, c_ubyte(1 if pid else 0), c_uint32(evade_mask)
@@ -604,7 +615,7 @@ class HyperDbgSession:
 
     def disable_transparent_mode(self) -> None:
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._drain()
             ok = self._dll.hyperdbg_u_disable_transparent_mode()
             output = self._drain_settled() if not ok else ""
@@ -620,7 +631,7 @@ class HyperDbgSession:
 
     def start_process(self, path: str, args: str = "") -> None:
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._drain()
             if args:
                 ok = self._dll.hyperdbg_u_start_process_with_args(path, args)
@@ -644,7 +655,7 @@ class HyperDbgSession:
 
     def step_track(self) -> None:
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_stepping_instrumentation_step_in_for_tracking()
 
     # ----- Batch C: assembler ---------------------------------------------- #
@@ -652,7 +663,7 @@ class HyperDbgSession:
         """Encode x86-64 assembly to machine-code bytes (two-step: length then fill)."""
         code_b = code.encode("utf-8")
         length = c_uint32(0)
-        with self._lock:
+        with self._ops():
             if not self._dll.hyperdbg_u_assemble_get_length(
                 code_b, c_uint64(address), byref(length)
             ):
@@ -669,14 +680,14 @@ class HyperDbgSession:
     def get_idt_entries(self) -> dict:
         self._require_connected()
         pkt = ffi.INTERRUPT_DESCRIPTOR_TABLE_ENTRIES_PACKETS()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_get_idt_entry(byref(pkt))
         return {"kernel_status": pkt.KernelStatus, "entries": list(pkt.IdtEntry)}
 
     def get_io_apic(self) -> dict:
         self._require_connected()
         pkt = ffi.IO_APIC_ENTRY_PACKETS()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_get_io_apic(byref(pkt))
         return {
             "base_pa": pkt.ApicBasePa,
@@ -689,7 +700,7 @@ class HyperDbgSession:
         self._require_connected()
         pkt = ffi.SMI_OPERATION_PACKETS()
         pkt.SmiOperationType = ffi.SMI_READ_COUNT
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_perform_smi_operation(byref(pkt))
         return int(pkt.SmiCount)
 
@@ -755,10 +766,33 @@ class HyperDbgSession:
         return "".join(parts)
 
     # ----- commands -------------------------------------------------------- #
+    @contextmanager
+    def _ops(self, timeout: float | None = None):
+        """Serialize a libhyperdbg call, giving up instead of hanging forever.
+
+        A step or gu can wait for a halt that never comes (the thread was in a
+        kernel wait, or the debuggee exited mid-step): that thread holds this
+        lock for the rest of the process's life, and every other tool used to
+        block on it with no way out but a server restart. Waiting is bounded so
+        the client gets an error it can act on.
+        """
+        timeout = _OPS_TIMEOUT_S if timeout is None else timeout
+        if not self._lock.acquire(timeout=timeout):
+            raise HyperDbgError(
+                f"another command has held the session for {timeout:.0f}s: it is most "
+                "likely a step waiting for a thread that will never halt (the debuggee "
+                "exited mid-step, or is blocked in the kernel). Try hd_exec_pause; if "
+                "that does not bring the tools back, restart the server."
+            )
+        try:
+            yield
+        finally:
+            self._lock.release()
+
     def run_command(self, command: str) -> str:
         """Run a HyperDbg CLI command and return its captured text output."""
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._drain()  # discard anything stale before we start
             _mark_interpreter_used()
             status = self._dll.hyperdbg_u_run_command(command.encode("utf-8"))
@@ -777,7 +811,7 @@ class HyperDbgSession:
         self._require_connected()
         regs = ffi.GUEST_REGS()
         extra = ffi.GUEST_EXTRA_REGISTERS()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_read_all_registers(byref(regs), byref(extra))
         out = {name: getattr(regs, name) for name, _ in regs._fields_}
         out.update({name: getattr(extra, name) for name, _ in extra._fields_})
@@ -789,7 +823,7 @@ class HyperDbgSession:
         if reg_id is None:
             raise HyperDbgError(f"unknown register {name!r}")
         value = c_uint64()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_read_target_register(reg_id, byref(value))
         return value.value
 
@@ -804,7 +838,7 @@ class HyperDbgSession:
             # script engine instead (`@reg=value;` run in the paused thread).
             self.run_command(f"r {name.lower()} = {value:#x}")
             return
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_write_target_register(reg_id, value)
 
     def _target_pid(self, pid: int) -> int:
@@ -834,7 +868,7 @@ class HyperDbgSession:
         buf = create_string_buffer(size)
         ret_len = c_uint32(0)
         mem_type = ffi.ReadMemoryType.VIRTUAL if virtual else ffi.ReadMemoryType.PHYSICAL
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_read_memory(
                 c_uint64(address),
                 mem_type,
@@ -857,7 +891,7 @@ class HyperDbgSession:
             raise HyperDbgError("write payload is empty")
         buf = create_string_buffer(bytes(data), len(data))
         mem_type = ffi.EditMemoryType.VIRTUAL if virtual else ffi.EditMemoryType.PHYSICAL
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_write_memory(
                 c_void_p(address),
                 mem_type,
@@ -868,7 +902,7 @@ class HyperDbgSession:
 
     def set_breakpoint(self, address: int, *, pid: int = 0, tid: int = 0, core: int = 0) -> None:
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._dll.hyperdbg_u_set_breakpoint(address, pid, tid, core)
 
     def continue_debuggee(self) -> bool:
@@ -880,7 +914,7 @@ class HyperDbgSession:
         """
         self._require_connected()
         if self._mode != "remote":
-            with self._lock:
+            with self._ops():
                 self._dll.hyperdbg_u_continue_debuggee()
             return False
         t = threading.Thread(target=self._dll.hyperdbg_u_continue_debuggee, daemon=True)
@@ -895,12 +929,21 @@ class HyperDbgSession:
             raise NotConnectedError("HyperDbg session is not connected")
         if self._mode == "local":
             # Not under the lock: a user-debugger step or `gu` holds it while it
-            # waits for the thread to stop, and a pause is what releases that
-            # wait (libhyperdbg signals it on any halt), like the CLI's CTRL+C.
+            # waits for the thread to halt.
+            if self._lock.locked():
+                # A `gu` loop stops only when libhyperdbg's instrumenting flag is
+                # cleared, and only its CTRL+C handler clears it (gu.cpp), so do
+                # what the CLI's CTRL+C does. Best effort: without a console of
+                # our own the event cannot be raised.
+                try:
+                    _mark_interpreter_used()
+                    _console_break()
+                except HyperDbgError as exc:
+                    _log.info("cannot interrupt the running step: %s", exc)
             self._dll.hyperdbg_u_pause_debuggee()
             return
         if not self.is_running:
-            with self._lock:
+            with self._ops():
                 self._dll.hyperdbg_u_pause_debuggee()
             return
         # hyperdbg_u_pause_debuggee is a no-op over serial/pipe (it only handles
@@ -927,13 +970,13 @@ class HyperDbgSession:
         }.get(mode)
         if fn is None:
             raise HyperDbgError(f"unknown step mode {mode!r} (use over|in|instr)")
-        with self._lock:
+        with self._ops():
             fn()
 
     def eval_expression(self, expr: str) -> int:
         self._require_connected()
         has_error = c_ubyte(0)
-        with self._lock:
+        with self._ops():
             self._drain()
             value = self._dll.hyperdbg_u_eval_expression(expr.encode("utf-8"), byref(has_error))
             output = self._drain()
@@ -955,7 +998,7 @@ class HyperDbgSession:
         not (ShowErrorMessageIfAny), and that text goes into the error.
         """
         self._require_connected()
-        with self._lock:
+        with self._ops():
             self._drain()
             try:
                 self._dll.hyperdbg_u_run_script(script.encode("utf-8"), c_ubyte(1))

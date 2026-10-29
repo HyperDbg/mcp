@@ -118,6 +118,18 @@ passed to the script engine, so read-only tools stay read-only.
 Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
 (the client retries the call with the answer); older revisions use `elicitation/create`.
 
+### When a step never returns
+
+HyperDbg's user-mode debugger is beta, and a step can wait for a halt that never comes:
+the thread is blocked in the kernel, or the debuggee exited (or faulted) while the step
+was in flight. libhyperdbg has no termination notification for that, so the call that
+started the step never returns and keeps holding the session. Tools therefore wait for
+the session for 60 s and then fail with "another command has held the session"; after
+that, `hd_exec_pause` is worth a try, and the server has to be restarted if it does not
+help. Note that `hd_process_start` pauses the new process in its start-up path: set
+breakpoints there and `hd_exec_continue`, don't step — stepping from that synthetic
+state faults the process in `ntdll`.
+
 ## Development
 
 ```bash
