@@ -12,7 +12,7 @@ license = "GPL-3.0-or-later"
 authors = [{ name = "munraimix" }]
 keywords = ["hyperdbg", "mcp", "debugger", "reverse-engineering", "model-context-protocol"]
 dependencies = [
-    "mcp>=1.12",
+    "mcp>=2.0",
     "pydantic>=2.7",
 ]
 

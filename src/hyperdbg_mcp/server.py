@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import os
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .safety import AuditLog
 from .session import HyperDbgSession
@@ -49,6 +50,9 @@ class AppContext:
     session: HyperDbgSession
     audit: AuditLog
     read_only: bool
+    # Pre-approve target-mutating tools for clients that cannot elicit (see
+    # require_confirmation): without it every destructive call fails closed.
+    assume_consent: bool = False
 
 
 def build_server(
@@ -58,7 +62,8 @@ def build_server(
     audit_path: str,
     session_factory: Callable[[], HyperDbgSession] | None = None,
     connect: Callable[[HyperDbgSession], None] | None = None,
-) -> FastMCP:
+    assume_consent: bool = False,
+) -> MCPServer:
     audit = AuditLog(audit_path)
 
     def _default_factory() -> HyperDbgSession:
@@ -71,7 +76,7 @@ def build_server(
     do_connect = connect
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
+    async def lifespan(_server: MCPServer) -> AsyncIterator[AppContext]:
         session = factory()
         if do_connect is not None:
             do_connect(session)
@@ -79,12 +84,17 @@ def build_server(
         # exit. close() is idempotent, so the finally + atexit can't double-act.
         atexit.register(session.close)
         try:
-            yield AppContext(session=session, audit=audit, read_only=read_only)
+            yield AppContext(
+                session=session,
+                audit=audit,
+                read_only=read_only,
+                assume_consent=assume_consent,
+            )
         finally:
             atexit.unregister(session.close)
             session.close()
 
-    mcp = FastMCP("hyperdbg-mcp", lifespan=lifespan)
+    mcp = MCPServer("hyperdbg-mcp", lifespan=lifespan)
     register_tools(mcp, read_only=read_only)
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)
@@ -108,6 +118,32 @@ def main() -> None:
             "commands, breakpoints, and memory/register/script writes."
         ),
     )
+    parser.add_argument(
+        "--assume-consent",
+        action="store_true",
+        help=(
+            "Pre-approve target-mutating tools (hd_exec_command, hd_mem_write, "
+            "hd_reg_write, hd_script_run, SDK calls). Use when the MCP client "
+            "cannot elicit confirmation: otherwise every destructive tool "
+            "fails closed."
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help=(
+            "stdio (default): one session per client process. http: a long-lived "
+            "Streamable HTTP server at /mcp that keeps the debugger session across "
+            "client reconnects; requires a bearer token in $HYPERDBG_MCP_TOKEN."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Address to bind with --transport http (default: loopback only).",
+    )
+    parser.add_argument("--port", type=int, default=8765, help="Port for --transport http.")
     parser.add_argument(
         "--lib-path",
         default=None,
@@ -171,8 +207,15 @@ def main() -> None:
         audit_path=args.audit_log,
         session_factory=session_factory,
         connect=connect,
+        assume_consent=args.assume_consent,
     )
-    server.run()  # stdio transport by default
+    if args.transport == "http":
+        from .transport_http import TOKEN_ENV, check_token, serve_http
+
+        token = check_token(os.environ.get(TOKEN_ENV))
+        serve_http(server, host=args.host, port=args.port, token=token)
+    else:
+        server.run()  # stdio
 
 
 if __name__ == "__main__":

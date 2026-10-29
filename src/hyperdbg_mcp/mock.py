@@ -59,14 +59,18 @@ class MockSession:
         self._mode = "local"
 
     def connect_remote_com(
-        self, port_name: str, baudrate: int = 115200, pause: bool = True
-    ) -> None:
+        self, port_name: str, baudrate: int = 115200, pause: bool = True, wait=None, reattach="auto"
+    ) -> bool:
         self.connected = True
         self._mode = "remote"
+        return True
 
-    def connect_remote_pipe(self, named_pipe: str, pause: bool = True) -> None:
+    def connect_remote_pipe(
+        self, named_pipe: str, pause: bool = True, wait=None, reattach="auto"
+    ) -> bool:
         self.connected = True
         self._mode = "remote"
+        return True
 
     def connect_remote_net(self, ip: str, port: str) -> None:
         self.connected = True
@@ -130,17 +134,17 @@ class MockSession:
     def is_any_module_loaded(self) -> bool:
         return True
 
-    def load_vmm(self) -> int:
-        return 1
+    def load_vmm(self) -> None:
+        return None
 
-    def unload_vmm(self) -> int:
-        return 1
+    def unload_vmm(self) -> None:
+        return None
 
-    def load_all_modules(self) -> int:
-        return 1
+    def load_all_modules(self) -> None:
+        return None
 
-    def unload_all_modules(self) -> int:
-        return 1
+    def unload_all_modules(self) -> None:
+        return None
 
     def get_processor_vendor(self) -> str:
         return "Intel"
