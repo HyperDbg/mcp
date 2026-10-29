@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import queue
 import sys
 import threading
@@ -42,6 +43,10 @@ from .errors import HyperDbgError, NotConnectedError, PreconditionError
 from .safety import wrap_untrusted
 
 _log = logging.getLogger(__name__)
+
+# libhyperdbg's message when the previous hyperkd service is still marked for
+# deletion (see HyperDbgSession._install_kd_driver).
+_DRIVER_PENDING_DELETE = "not fully deleted"
 
 
 def _is_error_status(status: int) -> bool:
@@ -167,6 +172,9 @@ class HyperDbgSession:
     session. Multi-session support is explicitly out of scope for v1
     (see DESIGN §11).
     """
+
+    # How long load_vmm waits for a previous hyperkd service to finish deleting.
+    driver_reinstall_timeout = 15.0
 
     def __init__(self, dll: CDLL | None = None) -> None:
         self._dll = dll or ffi.load_libhyperdbg()
@@ -473,6 +481,25 @@ class HyperDbgSession:
                 if rc != 0:
                     raise self._connect_error(f"{what} failed (rc={rc})")
 
+    def _install_kd_driver(self) -> int:
+        """Install the kd driver, riding out a service still pending deletion.
+
+        Verified on hardware: the SCM keeps a deleted service until its last
+        handle closes, so a server started right after another one released the
+        driver (an MCP client's probe process, a reconnect, a restart) finds
+        hyperkd "not fully deleted" and libhyperdbg gives up at once. Retry
+        until the old instance is gone instead of failing the load.
+        """
+        deadline = time.monotonic() + self.driver_reinstall_timeout
+        while True:
+            rc = int(self._dll.hyperdbg_u_install_kd_driver())
+            if rc == 0 or time.monotonic() >= deadline:
+                return rc
+            if _DRIVER_PENDING_DELETE not in self._peek():
+                return rc
+            self._drain()  # this attempt's failure is not the caller's to report
+            time.sleep(0.5)
+
     def load_vmm(self) -> None:
         """Load the HyperDbg hypervisor (VMM), installing the kd driver first.
 
@@ -481,9 +508,7 @@ class HyperDbgSession:
         implicitly anywhere - the operator must invoke it deliberately. Mirrors
         the CLI's `load vmm`: hyperdbg_u_load_vmm alone fails without the driver.
         """
-        self._module_op(
-            "load vmm", self._dll.hyperdbg_u_install_kd_driver, self._dll.hyperdbg_u_load_vmm
-        )
+        self._module_op("load vmm", self._install_kd_driver, self._dll.hyperdbg_u_load_vmm)
 
     def unload_vmm(self) -> None:
         """Unload the HyperDbg hypervisor (VMM) and the kd module, like the CLI's `unload vmm`.
@@ -497,9 +522,7 @@ class HyperDbgSession:
 
     def load_all_modules(self) -> None:
         self._module_op(
-            "load all modules",
-            self._dll.hyperdbg_u_install_kd_driver,
-            self._dll.hyperdbg_u_load_all_modules,
+            "load all modules", self._install_kd_driver, self._dll.hyperdbg_u_load_all_modules
         )
 
     def unload_all_modules(self) -> None:
@@ -708,6 +731,19 @@ class HyperDbgSession:
         with self._lock:
             self._dll.hyperdbg_u_write_target_register(reg_id, value)
 
+    def _target_pid(self, pid: int) -> int:
+        """The process a local (VMI) memory access defaults to, like the CLI.
+
+        hyperkd reads/writes in the context of the given pid; the CLI's d*/u*/e*
+        commands substitute their own process for pid 0 in VMI mode, but the
+        SDK exports don't. Passing 0 through made every local hd_mem_read fail
+        (verified on hardware). Kernel addresses read the same from any process.
+        In Debugger Mode the debuggee uses its halted context and pid stays 0.
+        """
+        if pid == 0 and self._mode == "local":
+            return os.getpid()
+        return pid
+
     def read_memory(
         self,
         address: int,
@@ -727,7 +763,7 @@ class HyperDbgSession:
                 c_uint64(address),
                 mem_type,
                 ffi.ReadingType.FROM_VMX_ROOT,
-                c_uint32(pid),
+                c_uint32(self._target_pid(pid)),
                 c_uint32(size),
                 c_ubyte(0),  # get_address_mode = false
                 None,  # address_mode out (unused)
@@ -749,7 +785,7 @@ class HyperDbgSession:
             self._dll.hyperdbg_u_write_memory(
                 c_void_p(address),
                 mem_type,
-                c_uint32(pid),
+                c_uint32(self._target_pid(pid)),
                 cast(buf, c_void_p),
                 c_uint32(len(data)),
             )
@@ -816,9 +852,18 @@ class HyperDbgSession:
         self._require_connected()
         has_error = c_ubyte(0)
         with self._lock:
+            self._drain()
             value = self._dll.hyperdbg_u_eval_expression(expr.encode("utf-8"), byref(has_error))
+            output = self._drain()
         if has_error.value:
-            raise HyperDbgError(f"eval_expression({expr!r}) reported an error")
+            # An unknown symbol is the usual cause: say how to fix it, and keep
+            # HyperDbg's own explanation (fenced: it may echo target data).
+            raise HyperDbgError(
+                f"could not evaluate {expr!r}. If it names a symbol, make sure symbols "
+                "are loaded (hd_sym_path + hd_sym_reload)."
+                + (("\n" + wrap_untrusted(output, "eval-output")) if output.strip() else ""),
+                status_code=has_error.value,
+            )
         return value
 
     def run_script(self, script: str) -> None:

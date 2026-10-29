@@ -178,6 +178,33 @@ def test_load_vmm_installs_driver_first_and_reports_failure():
     assert bad.calls == ["install"]  # no VMM load on a missing driver
 
 
+def test_load_vmm_waits_out_a_driver_service_pending_deletion(monkeypatch):
+    # Found live: a server started right after another released hyperkd (an MCP
+    # client's probe process) sees the old service still marked for deletion.
+    monkeypatch.setattr(session_mod.time, "sleep", lambda _s: None)
+    dll = ModuleDll()
+    session = HyperDbgSession(dll=dll)
+    pending = iter([1, 1, 0])
+
+    def install():
+        dll.calls.append("install")
+        rc = next(pending)
+        if rc:
+            session._on_text(b"err, previous instance of the service is not fully deleted")
+        return rc
+
+    dll.hyperdbg_u_install_kd_driver = install
+    session.load_vmm()
+    assert dll.calls == ["install", "install", "install", "load_vmm"]
+
+
+def test_load_vmm_does_not_retry_other_driver_failures():
+    dll = ModuleDll(install_rc=1)
+    with pytest.raises(HyperDbgError, match=r"load vmm failed \(rc=1\)"):
+        HyperDbgSession(dll=dll).load_vmm()
+    assert dll.calls == ["install"]
+
+
 def test_unload_vmm_also_unloads_kd_and_local_close_releases_modules():
     dll = ModuleDll()
     s = HyperDbgSession(dll=dll)
@@ -278,3 +305,32 @@ def test_background_connect_with_pause_false_resumes_the_debuggee():
     s._connect_thread.join(2)
     assert s.is_connected and s.is_running and s.last_connect_error is None
     dll.halt.set()
+
+
+class MemoryDll(ModuleDll):
+    def __init__(self):
+        super().__init__()
+        self.pids: list[int] = []
+
+    def hyperdbg_u_read_memory(self, address, mem_type, reading, pid, size, *rest):
+        self.pids.append(pid.value)
+        rest[-1]._obj.value = size.value
+        return 1
+
+    def hyperdbg_u_write_memory(self, dest, mem_type, pid, src, size):
+        self.pids.append(pid.value)
+        return 1
+
+
+def test_local_memory_access_defaults_to_own_process():
+    # Found live: the SDK exports pass pid 0 straight to hyperkd, which then has
+    # no process to read in; the CLI substitutes its own pid in VMI mode.
+    import os
+
+    dll = MemoryDll()
+    session = HyperDbgSession(dll=dll)
+    session.connect_local()
+    session.read_memory(0xFFFFF80000000000, 1)
+    session.write_memory_bytes(0xFFFFF80000000000, b"\x90")
+    session.read_memory(0x1000, 1, pid=4)
+    assert dll.pids == [os.getpid(), os.getpid(), 4]
