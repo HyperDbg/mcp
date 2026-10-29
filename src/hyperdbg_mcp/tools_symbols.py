@@ -9,8 +9,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
-from .errors import HyperDbgError
-from .toolkit import RO, STATE, resolve_addr, run_text, token
+from .toolkit import RO, STATE, host_path, resolve_addr, run_text, token
 
 
 def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
@@ -47,10 +46,8 @@ def register_symbols(mcp: MCPServer, *, read_only: bool) -> None:
 
         Section dumps are capped by HyperDbg at 1 MiB per section, 4 MiB total.
         """
-        if not path or any(c in path for c in '"\r\n'):
-            raise HyperDbgError(f"invalid path {path!r}")
         what = f"section {token(section, 'section')}" if section else "header"
-        cmd = f'.pe {what} "{path}"'
+        cmd = f".pe {what} {host_path(path)}"
         return run_text(ctx, cmd, audit="hd_pe_parse", kind="pe", args={"path": path})
 
     @mcp.tool(name="hd_sym_path", annotations=STATE)

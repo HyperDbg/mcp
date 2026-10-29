@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from mcp.server.mcpserver import Context, MCPServer
 
+from .errors import HyperDbgError
 from .toolkit import RO, app_ctx, resolve_addr, run_text
 
 
@@ -58,3 +59,19 @@ def register_hw(mcp: MCPServer, *, read_only: bool) -> None:
         n = app.session.smi_count()
         app.audit.record("hd_smi_count", {}, status="ok")
         return f"smi_count={n}"
+
+    @mcp.tool(name="hd_pci_tree", annotations=RO)
+    def hd_pci_tree(ctx: Context) -> str:
+        """Enumerate the PCI/PCIe devices (bus:device.function, vendor/device ids)."""
+        return run_text(ctx, "!pcitree", audit="hd_pci_tree", kind="hardware")
+
+    @mcp.tool(name="hd_pci_cam", annotations=RO)
+    def hd_pci_cam(bus: int, device: int, function: int, ctx: Context, raw: bool = False) -> str:
+        """Dump a PCI device's configuration space (decoded; raw=True adds a hex dump)."""
+        if not (0 <= bus <= 0xFF and 0 <= device <= 0x1F and 0 <= function <= 7):
+            raise HyperDbgError("bus 0-0xff, device 0-0x1f, function 0-7")
+        cmd = f"!pcicam {bus:x} {device:x} {function:x}" + (" x" if raw else "")
+        return run_text(
+            ctx, cmd, audit="hd_pci_cam", kind="hardware",
+            args={"bus": bus, "device": device, "function": function},
+        )

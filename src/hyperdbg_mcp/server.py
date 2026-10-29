@@ -20,6 +20,7 @@ from .safety import AuditLog
 from .session import HyperDbgSession
 from .tools import register_tools
 from .tools_connection import register_connection
+from .tools_debugger import register_debugger
 from .tools_events import register_events
 from .tools_flow import register_flow
 from .tools_hooks import register_hooks
@@ -29,6 +30,7 @@ from .tools_paging import register_paging
 from .tools_sdk import register_sdk
 from .tools_symbols import register_symbols
 from .tools_system import register_system
+from .tools_trace import register_trace
 
 # Every domain module's register_<domain>(mcp, *, read_only) entry point.
 _TOOL_MODULES = (
@@ -42,6 +44,8 @@ _TOOL_MODULES = (
     register_events,
     register_sdk,
     register_hw,
+    register_trace,
+    register_debugger,
 )
 
 

@@ -17,6 +17,7 @@ from .toolkit import (
     STATE,
     bracket_body,
     choose,
+    output_names,
     parse_addr,
     resolve_addr,
     run_text,
@@ -42,8 +43,16 @@ _PREALLOC_TYPES = {
 }
 
 
-def _suffix(pid: int, core: int, script: str, stage: str = "", short_circuit: bool = False) -> str:
-    """Build the event-option suffix (pid/core/stage/sc/script) for a hook command."""
+def _suffix(
+    pid: int,
+    core: int,
+    script: str,
+    stage: str = "",
+    short_circuit: bool = False,
+    *,
+    output: str = "",
+) -> str:
+    """Build the event-option suffix (pid/core/stage/sc/output/script) for a hook command."""
     parts = []
     if pid:
         parts.append(f" pid {pid:#x}")
@@ -53,6 +62,8 @@ def _suffix(pid: int, core: int, script: str, stage: str = "", short_circuit: bo
         parts.append(" stage " + choose(stage, _STAGES, "stage"))
     if short_circuit:
         parts.append(" sc on")
+    if output:
+        parts.append(f" output {{{output_names(output)}}}")
     if script:
         parts.append(f" script {{ {bracket_body(script)} }}")
     return "".join(parts)
@@ -69,12 +80,15 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Set EPT (Extended Page Tables) hook at address (hex string)."""
         addr = resolve_addr(ctx, address)
-        cmd = f"!epthook {addr:#x}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!epthook {addr:#x}" + _suffix(
+            pid, core, script, stage, short_circuit, output=output
+        )
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -91,12 +105,15 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Set EPT2 (Extended Page Tables 2) hook at address (hex string)."""
         addr = resolve_addr(ctx, address)
-        cmd = f"!epthook2 {addr:#x}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!epthook2 {addr:#x}" + _suffix(
+            pid, core, script, stage, short_circuit, output=output
+        )
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -115,6 +132,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -122,7 +140,9 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         frm = resolve_addr(ctx, from_address)
         to = resolve_addr(ctx, to_address)
         attr = choose(attribute, _MONITOR_ATTRS, "attribute")
-        cmd = f"!monitor {attr} {frm:#x} {to:#x}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!monitor {attr} {frm:#x} {to:#x}" + _suffix(
+            pid, core, script, stage, short_circuit, output=output
+        )
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -139,6 +159,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -146,7 +167,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!syscall"
         if syscall_number >= 0:
             cmd += f" {syscall_number:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -162,11 +183,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook sysret (return from syscall) instruction."""
-        cmd = "!sysret" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = "!sysret" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -183,6 +205,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -190,7 +213,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!cpuid"
         if eax >= 0:
             cmd += f" {eax:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -207,6 +230,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -214,7 +238,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!msrread"
         if msr >= 0:
             cmd += f" {msr:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -231,6 +255,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -238,7 +263,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!msrwrite"
         if msr >= 0:
             cmd += f" {msr:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -254,11 +279,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook TSC (Time Stamp Counter) instruction."""
-        cmd = "!tsc" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = "!tsc" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set tsc hook: {cmd}", audit="hd_hook_tsc", kind="events", args={}
         )
@@ -269,11 +295,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook PMC (Performance Monitoring Counters)."""
-        cmd = "!pmc" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = "!pmc" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set pmc hook: {cmd}", audit="hd_hook_pmc", kind="events", args={}
         )
@@ -285,6 +312,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -292,7 +320,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!ioin"
         if port >= 0:
             cmd += f" {port:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -309,6 +337,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -316,7 +345,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!ioout"
         if port >= 0:
             cmd += f" {port:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -332,11 +361,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook VMCALL (hypervisor call) instruction."""
-        cmd = "!vmcall" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = "!vmcall" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -353,6 +383,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -360,7 +391,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!exception"
         if idt_index >= 0:
             cmd += f" {idt_index:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -377,11 +408,14 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook specific interrupt by IDT index."""
-        cmd = f"!interrupt {idt_index:#x}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!interrupt {idt_index:#x}" + _suffix(
+            pid, core, script, stage, short_circuit, output=output
+        )
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -397,11 +431,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook debug register access."""
-        cmd = "!dr" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = "!dr" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set dr hook: {cmd}", audit="hd_hook_dr", kind="events", args={}
         )
@@ -413,6 +448,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         ctx: Context,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -421,7 +457,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         Run hd_preactivate first (mode-based execution traps must be preactivated).
         """
         m = choose(mode, _MODES, "mode")
-        cmd = f"!mode {m}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!mode {m}" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -438,12 +474,13 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Trace execution as an event (trace_type: step-in|step-out|instrument-step)."""
         t = choose(trace_type, _TRACE_TYPES, "trace_type")
-        cmd = f"!trace {t}" + _suffix(pid, core, script, stage, short_circuit)
+        cmd = f"!trace {t}" + _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -461,6 +498,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
@@ -471,7 +509,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         m = parse_addr(mask)
         if m:
             cmd += f" mask {m:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -488,12 +526,13 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         pid: int = 0,
         core: int = 0,
         script: str = "",
+        output: str = "",
         stage: str = "",
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook all XSETBV instructions or a specific XCR if xcr >= 0."""
         cmd = "!xsetbv" + (f" {xcr:#x}" if xcr >= 0 else "")
-        cmd += _suffix(pid, core, script, stage, short_circuit)
+        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,

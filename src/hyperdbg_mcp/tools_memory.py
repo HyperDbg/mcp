@@ -13,7 +13,16 @@ from mcp.server.mcpserver import Context, MCPServer
 from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
-from .toolkit import DESTRUCTIVE, RO, choose, hex_values, resolve_addr, run_text, run_text_confirmed
+from .toolkit import (
+    DESTRUCTIVE,
+    RO,
+    choose,
+    hex_values,
+    host_path,
+    resolve_addr,
+    run_text,
+    run_text_confirmed,
+)
 
 _DISPLAY = {
     "byte": "db",
@@ -134,4 +143,31 @@ def register_memory(mcp: MCPServer, *, read_only: bool) -> None:
             audit="hd_pagein",
             kind="memory",
             args={"address": addr, "length": length, "mode": mode},
+        )
+
+    @mcp.tool(name="hd_mem_dump", annotations=DESTRUCTIVE)
+    async def hd_mem_dump(
+        from_address: str,
+        to_address: str,
+        path: str,
+        ctx: Context,
+        pid: int = 0,
+        physical: bool = False,
+    ) -> str | InputRequiredResult:
+        """Save memory [from_address, to_address) to a file on the debugger host."""
+        frm = resolve_addr(ctx, from_address)
+        to = resolve_addr(ctx, to_address)
+        if to <= frm:
+            raise HyperDbgError("to_address must be above from_address")
+        cmd = ("!dump" if physical else ".dump") + f" {frm:#x} {to:#x}"
+        if pid:
+            cmd += f" pid {pid:#x}"
+        cmd += f" path {host_path(path)}"
+        return await run_text_confirmed(
+            ctx,
+            cmd,
+            what=f"write {to - frm:#x} bytes of memory to {path}",
+            audit="hd_mem_dump",
+            kind="memory",
+            args={"from_address": frm, "to_address": to, "path": path, "pid": pid},
         )
