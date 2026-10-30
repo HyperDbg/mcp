@@ -1,0 +1,10 @@
+{
+ "case": "bad-setting",
+ "tool": "hd_settings",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_settings: invalid option 'nosuch' (use autounpause | autoflush | addressconversion | syntax)"
+  }
+ ]
+}

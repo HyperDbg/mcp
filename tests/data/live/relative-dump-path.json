@@ -1,0 +1,10 @@
+{
+ "case": "relative-dump-path",
+ "tool": "hd_mem_dump",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_mem_dump: invalid path 'relative.bin' (absolute path, e.g. C:\\work\\out.bin)"
+  }
+ ]
+}

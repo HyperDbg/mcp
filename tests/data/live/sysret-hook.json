@@ -1,0 +1,10 @@
+{
+ "case": "sysret-hook",
+ "tool": "hd_hook_sysret",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

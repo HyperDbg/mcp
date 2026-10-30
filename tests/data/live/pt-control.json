@@ -1,0 +1,10 @@
+{
+ "case": "pt-control",
+ "tool": "hd_pt_control",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the trace request)"
+  }
+ ]
+}

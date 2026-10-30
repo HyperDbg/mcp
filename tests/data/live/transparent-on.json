@@ -1,0 +1,10 @@
+{
+ "case": "transparent-on",
+ "tool": "hd_transparent_enable",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Transparent mode enabled."
+  }
+ ]
+}

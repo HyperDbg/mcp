@@ -1,0 +1,10 @@
+{
+ "case": "size-huge",
+ "tool": "hd_mem_read",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_mem_read: read size out of range: 33554432"
+  }
+ ]
+}

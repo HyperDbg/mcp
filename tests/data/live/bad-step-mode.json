@@ -1,0 +1,10 @@
+{
+ "case": "bad-step-mode",
+ "tool": "hd_exec_step",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_exec_step: unknown step mode 'zzz' (use over|in|instr)"
+  }
+ ]
+}

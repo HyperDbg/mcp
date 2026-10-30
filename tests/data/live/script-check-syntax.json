@@ -1,0 +1,10 @@
+{
+ "case": "script-check-syntax",
+ "tool": "hd_script_check",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_script_check: script error at line 2, column 9: Syntax Error: Invalid Syntax\n  y = 2 + ;\n          ^\nhint: end every statement with ';', balance the parentheses and braces, and write if/while/for bodies in { }."
+  }
+ ]
+}

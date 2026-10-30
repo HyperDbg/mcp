@@ -1,0 +1,246 @@
+{
+ "case": "umd-reg-x60",
+ "tool": "hd_reg_read",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  },
+  {
+   "is_error": false,
+   "text": "0x15f4c0"
+  }
+ ]
+}

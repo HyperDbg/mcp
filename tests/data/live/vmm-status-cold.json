@@ -1,0 +1,10 @@
+{
+ "case": "vmm-status-cold",
+ "tool": "hd_vmm_status",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "module_loaded=False"
+  }
+ ]
+}

@@ -28,6 +28,10 @@ def wrap_untrusted(data: str, kind: str = "debuggee-data") -> str:
     Oversized payloads are truncated with an explicit marker so the model is
     never silently handed a partial view.
     """
+    if not data.strip():
+        # A command that printed nothing (a hook that was applied, a silent
+        # setting) would otherwise come back as an empty fence.
+        return f"done (HyperDbg printed nothing for the {kind} request)"
     truncated = ""
     if len(data) > _MAX_UNTRUSTED_CHARS:
         data = data[:_MAX_UNTRUSTED_CHARS]

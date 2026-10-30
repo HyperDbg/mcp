@@ -59,14 +59,18 @@ class MockSession:
         self._mode = "local"
 
     def connect_remote_com(
-        self, port_name: str, baudrate: int = 115200, pause: bool = True
-    ) -> None:
+        self, port_name: str, baudrate: int = 115200, pause: bool = True, wait=None, reattach="auto"
+    ) -> bool:
         self.connected = True
         self._mode = "remote"
+        return True
 
-    def connect_remote_pipe(self, named_pipe: str, pause: bool = True) -> None:
+    def connect_remote_pipe(
+        self, named_pipe: str, pause: bool = True, wait=None, reattach="auto"
+    ) -> bool:
         self.connected = True
         self._mode = "remote"
+        return True
 
     def connect_remote_net(self, ip: str, port: str) -> None:
         self.connected = True
@@ -104,11 +108,17 @@ class MockSession:
     def run_command(self, command: str) -> str:
         return f"[mock] executed: {command}"
 
-    def run_script(self, script: str) -> None:
-        return None
+    def run_script(self, script: str) -> str:
+        return ""
 
     def eval_expression(self, expr: str) -> int:
         return len(expr)
+
+    def check_script(self, script: str) -> str | None:
+        return None
+
+    def engine_context(self) -> str:
+        return "target"
 
     def set_breakpoint(self, address: int, *, pid: int = 0, tid: int = 0, core: int = 0) -> None:
         return None
@@ -130,17 +140,19 @@ class MockSession:
     def is_any_module_loaded(self) -> bool:
         return True
 
-    def load_vmm(self) -> int:
-        return 1
+    def load_vmm(self) -> None:
+        if not self.connected:
+            self.connect_local()
 
-    def unload_vmm(self) -> int:
-        return 1
+    def unload_vmm(self) -> None:
+        return None
 
-    def load_all_modules(self) -> int:
-        return 1
+    def load_all_modules(self) -> None:
+        if not self.connected:
+            self.connect_local()
 
-    def unload_all_modules(self) -> int:
-        return 1
+    def unload_all_modules(self) -> None:
+        return None
 
     def get_processor_vendor(self) -> str:
         return "Intel"
@@ -149,7 +161,7 @@ class MockSession:
         return 0xFFFFF80000000000
 
     def enable_transparent_mode(
-        self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1F
+        self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1E
     ) -> None:
         return None
 
@@ -159,8 +171,8 @@ class MockSession:
     def start_process(self, path: str, args: str = "") -> None:
         return None
 
-    def step_out(self, last_instruction: bool = False) -> None:
-        return None
+    def step_out(self, max_steps: int = 0) -> str:
+        return ""
 
     def step_track(self) -> None:
         return None

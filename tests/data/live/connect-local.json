@@ -1,0 +1,10 @@
+{
+ "case": "connect-local",
+ "tool": "hd_connect",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "already connected (local); hd_disconnect first"
+  }
+ ]
+}

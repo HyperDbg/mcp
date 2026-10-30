@@ -9,16 +9,22 @@ from __future__ import annotations
 
 import argparse
 import atexit
+import faulthandler
+import logging
+import os
+import sys
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 
-from mcp.server.fastmcp import FastMCP
+from mcp.server.mcpserver import MCPServer
 
 from .safety import AuditLog
+from .script import COOKBOOK
 from .session import HyperDbgSession
 from .tools import register_tools
 from .tools_connection import register_connection
+from .tools_debugger import register_debugger
 from .tools_events import register_events
 from .tools_flow import register_flow
 from .tools_hooks import register_hooks
@@ -28,6 +34,7 @@ from .tools_paging import register_paging
 from .tools_sdk import register_sdk
 from .tools_symbols import register_symbols
 from .tools_system import register_system
+from .tools_trace import register_trace
 
 # Every domain module's register_<domain>(mcp, *, read_only) entry point.
 _TOOL_MODULES = (
@@ -41,6 +48,8 @@ _TOOL_MODULES = (
     register_events,
     register_sdk,
     register_hw,
+    register_trace,
+    register_debugger,
 )
 
 
@@ -49,6 +58,9 @@ class AppContext:
     session: HyperDbgSession
     audit: AuditLog
     read_only: bool
+    # Pre-approve target-mutating tools for clients that cannot elicit (see
+    # require_confirmation): without it every destructive call fails closed.
+    assume_consent: bool = False
 
 
 def build_server(
@@ -58,7 +70,8 @@ def build_server(
     audit_path: str,
     session_factory: Callable[[], HyperDbgSession] | None = None,
     connect: Callable[[HyperDbgSession], None] | None = None,
-) -> FastMCP:
+    assume_consent: bool = False,
+) -> MCPServer:
     audit = AuditLog(audit_path)
 
     def _default_factory() -> HyperDbgSession:
@@ -71,7 +84,7 @@ def build_server(
     do_connect = connect
 
     @asynccontextmanager
-    async def lifespan(_server: FastMCP) -> AsyncIterator[AppContext]:
+    async def lifespan(_server: MCPServer) -> AsyncIterator[AppContext]:
         session = factory()
         if do_connect is not None:
             do_connect(session)
@@ -79,16 +92,52 @@ def build_server(
         # exit. close() is idempotent, so the finally + atexit can't double-act.
         atexit.register(session.close)
         try:
-            yield AppContext(session=session, audit=audit, read_only=read_only)
+            yield AppContext(
+                session=session,
+                audit=audit,
+                read_only=read_only,
+                assume_consent=assume_consent,
+            )
         finally:
+            logging.getLogger(__name__).info("server shutting down: closing the session")
             atexit.unregister(session.close)
             session.close()
 
-    mcp = FastMCP("hyperdbg-mcp", lifespan=lifespan)
+    mcp = MCPServer("hyperdbg-mcp", lifespan=lifespan)
     register_tools(mcp, read_only=read_only)
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)
+
+    @mcp.resource(
+        "hyperdbg://script/cookbook",
+        name="script-cookbook",
+        title="HyperDbg script cookbook",
+        description="Script syntax, functions, where scripts run, and recipes.",
+        mime_type="text/markdown",
+    )
+    def script_cookbook() -> str:
+        return COOKBOOK
+
     return mcp
+
+
+def _log_to_file(path: str, *, stdout_too: bool) -> None:
+    """Send everything the process prints to `path`.
+
+    Under a service or scheduled task nobody reads the console, and HyperDbg
+    writes to it directly (C stdio), so redirect the file descriptors, not just
+    sys.stderr. stdout is the protocol channel under stdio: leave it alone there.
+    """
+    log = open(path, "a", buffering=1, encoding="utf-8", errors="replace")  # noqa: SIM115
+    os.dup2(log.fileno(), 2)
+    if stdout_too:
+        os.dup2(log.fileno(), 1)
+    sys.stderr = log
+    faulthandler.enable(log)  # native crashes (access violations) get a traceback
+    logging.basicConfig(
+        stream=log, level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s"
+    )
+    logging.getLogger(__name__).info("hyperdbg-mcp starting (pid %d)", os.getpid())
 
 
 def _load(lib_path: str):
@@ -108,6 +157,32 @@ def main() -> None:
             "commands, breakpoints, and memory/register/script writes."
         ),
     )
+    parser.add_argument(
+        "--assume-consent",
+        action="store_true",
+        help=(
+            "Pre-approve target-mutating tools (hd_exec_command, hd_mem_write, "
+            "hd_reg_write, hd_script_run, SDK calls). Use when the MCP client "
+            "cannot elicit confirmation: otherwise every destructive tool "
+            "fails closed."
+        ),
+    )
+    parser.add_argument(
+        "--transport",
+        choices=("stdio", "http"),
+        default="stdio",
+        help=(
+            "stdio (default): one session per client process. http: a long-lived "
+            "Streamable HTTP server at /mcp that keeps the debugger session across "
+            "client reconnects; requires a bearer token in $HYPERDBG_MCP_TOKEN."
+        ),
+    )
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="Address to bind with --transport http (default: loopback only).",
+    )
+    parser.add_argument("--port", type=int, default=8765, help="Port for --transport http.")
     parser.add_argument(
         "--lib-path",
         default=None,
@@ -136,11 +211,19 @@ def main() -> None:
     parser.add_argument("--remote-pipe", default=None, help="Connect over a named pipe.")
     parser.add_argument("--remote-net", default=None, help="Connect over TCP as IP:PORT.")
     parser.add_argument(
+        "--log-file",
+        default=None,
+        help="Append logs, tracebacks and HyperDbg's own console output to this file "
+        "(stderr, and stdout too for --transport http).",
+    )
+    parser.add_argument(
         "--no-pause",
         action="store_true",
         help="Do not halt the debuggee on connect (default: pause for a valid CPU context).",
     )
     args = parser.parse_args()
+    if args.log_file:
+        _log_to_file(args.log_file, stdout_too=args.transport == "http")
 
     session_factory = None
     if args.mock:
@@ -171,8 +254,15 @@ def main() -> None:
         audit_path=args.audit_log,
         session_factory=session_factory,
         connect=connect,
+        assume_consent=args.assume_consent,
     )
-    server.run()  # stdio transport by default
+    if args.transport == "http":
+        from .transport_http import TOKEN_ENV, check_token, serve_http
+
+        token = check_token(os.environ.get(TOKEN_ENV))
+        serve_http(server, host=args.host, port=args.port, token=token)
+    else:
+        server.run()  # stdio
 
 
 if __name__ == "__main__":

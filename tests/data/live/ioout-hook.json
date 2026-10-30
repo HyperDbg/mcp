@@ -1,0 +1,10 @@
+{
+ "case": "ioout-hook",
+ "tool": "hd_hook_ioout",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

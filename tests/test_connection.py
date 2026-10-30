@@ -10,6 +10,7 @@ import pytest
 
 pytest.importorskip("mcp")  # requires the MCP SDK; skipped if absent
 
+from hyperdbg_mcp.errors import HyperDbgError  # noqa: E402
 from hyperdbg_mcp.mock import MockSession  # noqa: E402
 from hyperdbg_mcp.tools_connection import register_connection  # noqa: E402
 
@@ -92,5 +93,12 @@ async def test_connect_local_then_reconnect_repeats_last():
 
 async def test_unknown_transport_reports_error():
     mcp, app, ctx = _wire()
-    out = await mcp.funcs["hd_connect"](ctx, transport="bogus")
-    assert "connect failed" in out and not app.session.is_connected
+    # a tool error (isError), not a successful result that says it failed
+    with pytest.raises(HyperDbgError, match="connect failed"):
+        await mcp.funcs["hd_connect"](ctx, transport="bogus")
+    assert not app.session.is_connected
+
+
+async def test_disconnect_when_not_connected_says_so():
+    mcp, _, ctx = _wire()
+    assert await mcp.funcs["hd_disconnect"](ctx) == "not connected"

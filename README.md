@@ -5,8 +5,10 @@ An [MCP](https://modelcontextprotocol.io) server that exposes [HyperDbg](https:/
 
 > **Status:** early development (v0.0.1). The design is documented in
 > [`docs/DESIGN.md`](docs/DESIGN.md). End-to-end operation requires a Windows host with
-> HyperDbg installed and its driver loaded; the FFI layer has not yet been validated
-> against a live `libhyperdbg.dll`.
+> HyperDbg installed and its driver loaded. The FFI layer is validated against a live
+> `libhyperdbg.dll` from HyperDbg v0.25.0 (local VMI mode: VMM load/unload, symbols, memory
+> reads, disassembly), and `tests/test_ffi_signatures.py` checks every ctypes prototype
+> against that release's SDK header.
 
 ## How it works
 
@@ -15,8 +17,45 @@ of MCP tools that map to HyperDbg's command surface. Command text output is capt
 HyperDbg's message callback (see [`docs/DESIGN.md`](docs/DESIGN.md) §2).
 
 ```
-MCP client ──stdio──► hyperdbg-mcp (Python) ──ctypes──► libhyperdbg.dll ──► driver + VMM
+MCP client ──stdio / Streamable HTTP──► hyperdbg-mcp (Python) ──ctypes──► libhyperdbg.dll ──► driver + VMM
 ```
+
+## Transports
+
+The server runs on the Windows host next to the driver; the MCP client can live elsewhere.
+
+**stdio** (default) - one server per client process; the debugger session ends with it.
+From another machine, bridge it over SSH (`-T`: no TTY, so the JSON-RPC stream stays clean):
+
+```yaml
+command: ssh
+args: ["-T", "-o", "BatchMode=yes", "user@windows-host",
+       "C:\\hyperdbg-mcp\\.venv\\Scripts\\hyperdbg-mcp.exe --lib-path C:\\HyperDbg\\libhyperdbg.dll"]
+```
+
+**Streamable HTTP** (`--transport http`) - one long-lived server at `/mcp` whose debugger
+session (loaded VMM, symbols, a halted debuggee) outlives client restarts and reconnects.
+It always requires a bearer token in `$HYPERDBG_MCP_TOKEN` (32+ characters; requests without
+it get 401) and binds `127.0.0.1:8765` by default. Reach it from another machine through an
+SSH tunnel rather than binding a LAN address:
+
+```powershell
+# Windows host, as Administrator: token file readable by Administrators only
+scripts\windows\start-http.ps1 -TokenFile C:\ProgramData\hyperdbg-mcp\token `
+    --lib-path C:\HyperDbg\libhyperdbg.dll --audit-log C:\ProgramData\hyperdbg-mcp\audit.jsonl `
+    --log-file C:\ProgramData\hyperdbg-mcp\server.log
+```
+
+```bash
+# client machine
+ssh -N -L 8765:127.0.0.1:8765 user@windows-host
+# MCP client: url http://127.0.0.1:8765/mcp, header "Authorization: Bearer <token>"
+```
+
+Start it from a scheduled task (or another service host) rather than an SSH session:
+Windows' sshd ends every process of a session when the session closes. Nobody sees that
+console, so pass `--log-file`: it collects the server's logs, Python tracebacks and what
+HyperDbg itself prints (driver-load errors, missing DLLs).
 
 ## Safety
 
@@ -25,6 +64,8 @@ back from the target may be adversarial (you may be debugging malware)**. The se
 
 - annotates read-only vs destructive tools (`ToolAnnotations`);
 - requires per-call **confirmation** (MCP elicitation) for destructive tools;
+- fails such calls **closed** when the client advertises no elicitation - use
+  **`--assume-consent`** to pre-approve them for such clients;
 - supports a hard **`--read-only`** mode that does not register write/script tools at all;
 - wraps all debuggee-sourced data in an **untrusted-data envelope** so it is treated as inert;
 - writes an **append-only audit log** of every call.
@@ -35,6 +76,9 @@ hyperdbg-mcp --read-only
 
 # full access (destructive tools gated behind confirmation)
 hyperdbg-mcp --lib-path C:\path\to\libhyperdbg.dll --audit-log audit.jsonl
+
+# full access for a client without elicitation support (confirmation is skipped)
+hyperdbg-mcp --lib-path C:\path\to\libhyperdbg.dll --assume-consent
 
 # mock backend - exercise the full tool surface with no HyperDbg / DLL
 hyperdbg-mcp --mock
@@ -52,11 +96,64 @@ with nothing paused.)
 ## Tools
 
 **Read (always available):** `hd_mem_read`, `hd_reg_read_all`, `hd_reg_read`, `hd_eval`,
+`hd_script_eval`, `hd_script_check`, `hd_script_template`, `hd_script_cookbook`,
 `hd_disasm`, `hd_list_modules`, `hd_status`.
 **Execution control (available in `--read-only`):** `hd_exec_continue`, `hd_exec_pause`,
 `hd_exec_step`.
 **Target-mutating (full mode only, confirmation-gated):** `hd_exec_command`, `hd_bp_set`,
 `hd_mem_write`, `hd_reg_write`, `hd_script_run`.
+
+The domain modules (`tools_<domain>.py`) bring it to 114 tools (54 under `--read-only`): memory (incl. `dps/dqs` symbolized
+dumps, `.pagein`), symbols, paging, cores (`~`), process/thread switching and user-mode
+`.attach/.detach/.kill/.restart`, every event type (`!epthook` ... `!mode`, `!trace`,
+`!crwrite`, `!xsetbv`) with `pid/core/stage/sc/script` options, `prealloc/preactivate`,
+APIC/IDT/SMI, and `.pe`. Free-text arguments must be a single token and event scripts
+are checked against HyperDbg's `{}` tokenizer, so a value can't smuggle in extra options;
+confirmations show the exact command that will run.
+
+Address arguments take hex/decimal or a symbol with optional offsets
+(`nt!KdDebuggerEnabled`, `nt!PsLoadedModuleList+0x8`, `@rip-10`), resolved through
+HyperDbg's symbols (load them with `hd_sym_path` + `hd_sym_reload`). Nothing else is
+passed to the script engine, so read-only tools stay read-only.
+
+### Scripting
+
+HyperDbg's script engine is reachable four ways: `hd_eval` (one read-only expression →
+integer), `hd_script_eval` (a read-only script → what it prints; no confirmation),
+`hd_script_run` (any script, confirmed), and `script=` on every hook tool (runs on each hit).
+
+- **Parsed before it runs.** Every script goes through HyperDbg's own parser
+  (`ScriptEngineParse` in `script-engine.dll`, which runs nothing) first, so a typo comes
+  back as `script error at line 2, column 9: ... ` with the line, a caret and a hint
+  (unknown symbol, a name made only of hex digits, a global read before it is assigned),
+  instead of a hook that is half set up. `hd_script_check` does only that.
+- **Read-only means read-only.** `hd_script_eval` accepts locals, `if/while/for`, the
+  script's own functions, the reading functions and `printf`; it refuses writes to
+  registers, globals, memory (through pointers too), state-changing functions and
+  `#include`.
+- **No silent zeros.** In local VMI mode with no paused process HyperDbg only simulates the
+  engine (every register 0, no target memory). An expression that reads `@registers`,
+  `$pseudo-registers` or memory is refused there with what to do instead, rather than
+  answering 0; symbols and arithmetic still work.
+- **Templates and a cookbook.** `hd_script_template` builds common hook scripts (log
+  arguments, count hits, log / break / drop on a condition) that parse as they are;
+  `hd_script_cookbook` (also the `hyperdbg://script/cookbook` resource) is the syntax,
+  function list and recipes, including the parser's two traps.
+
+Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
+(the client retries the call with the answer); older revisions use `elicitation/create`.
+
+### When a step never returns
+
+HyperDbg's user-mode debugger is beta, and a step can wait for a halt that never comes:
+the thread is blocked in the kernel, or the debuggee exited (or faulted) while the step
+was in flight. libhyperdbg has no termination notification for that, so the call that
+started the step never returns and keeps holding the session. Tools therefore wait for
+the session for 60 s and then fail with "another command has held the session"; after
+that, `hd_exec_pause` is worth a try, and the server has to be restarted if it does not
+help. Note that `hd_process_start` pauses the new process in its start-up path: set
+breakpoints there and `hd_exec_continue`, don't step — stepping from that synthetic
+state faults the process in `ntdll`.
 
 ## Development
 
@@ -66,10 +163,28 @@ pytest
 ruff check .
 ```
 
+### Live cases (whole tool surface, real HyperDbg host)
+
+`scripts/live_cases.py` drives a running server over Streamable HTTP: one case per
+tool plus the validation and idempotency cases a session needs, in phases
+(`cold` / `load` / `read` / `events` / `write` / `umd` / `neg` / `cleanup`), each
+phase setting up the preconditions it needs. `expect` is `ok`, `error` or `any`
+(machine-dependent: no trace module, Debugger-Mode-only feature) and can require a
+substring, so a failure means the tool changed, not the machine.
+
+```bash
+python scripts/live_cases.py --config client/.http.json --report /tmp/live.json
+python scripts/live_cases.py --phase read --only mem          # a slice
+python scripts/live_cases.py --dangerous                      # adds the MSR write
+```
+
+The write cases echo back the value they read (a wrong MSR write, e.g. LSTAR=0,
+bugchecks the machine); `--dangerous` opts into the MSR one.
+
 ## Roadmap
 
-- Validate FFI against a live HyperDbg host.
-- Streamable-HTTP transport + progress streaming for long Intel-PT / LBR traces.
+- Validate Debugger Mode (serial / pipe / net) end-to-end against v0.25.0.
+- Progress streaming for long Intel-PT / LBR traces.
 - Symbol-aware helpers; richer structured outputs.
 
 ## License

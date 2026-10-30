@@ -1,0 +1,10 @@
+{
+ "case": "dr-hook",
+ "tool": "hd_hook_dr",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

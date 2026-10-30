@@ -1,0 +1,10 @@
+{
+ "case": "bad-output-action",
+ "tool": "hd_output",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_output: invalid action 'zzz' (use open | close)"
+  }
+ ]
+}

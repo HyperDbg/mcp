@@ -1,0 +1,10 @@
+{
+ "case": "msrread-hook",
+ "tool": "hd_hook_msrread",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the events request)"
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "case": "disconnect",
+ "tool": "hd_disconnect",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "disconnected (local session closed, HyperDbg modules unloaded)"
+  }
+ ]
+}

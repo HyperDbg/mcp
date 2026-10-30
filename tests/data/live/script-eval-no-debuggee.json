@@ -1,0 +1,10 @@
+{
+ "case": "script-eval-no-debuggee",
+ "tool": "hd_script_eval",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_script_eval: scripts run in a debuggee: in local VMI mode that means a paused user-mode process (hd_process_start, or attach and hd_exec_pause); otherwise connect in Debugger Mode. For expressions on symbols use hd_eval; to run a script on every hit of an event, pass it as script= to a hook tool."
+  }
+ ]
+}

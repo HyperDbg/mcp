@@ -1,0 +1,10 @@
+{
+ "case": "bad-reg",
+ "tool": "hd_reg_read",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_reg_read: unknown register 'nosuchreg'"
+  }
+ ]
+}

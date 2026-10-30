@@ -1,0 +1,10 @@
+{
+ "case": "script-check-symbol",
+ "tool": "hd_script_check",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_script_check: script error at line 1, column 5: Syntax Error: Invalid Syntax\n  x = nt!NoSuchThing;\n      ^\nhint: nt!NoSuchThing is not a known symbol: check the name (hd_sym_examine) and that symbols are loaded (hd_sym_path + hd_sym_reload)."
+  }
+ ]
+}

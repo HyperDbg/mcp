@@ -1,0 +1,10 @@
+{
+ "case": "transparent-syscall-refused",
+ "tool": "hd_transparent_enable",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_transparent_enable: the syscall-hook technique (evade_mask bit 0x1) hangs the machine in local VMI mode: it EPT-hooks the global syscall entry, and a core then spins in the hypervisor on the next syscalls (bugcheck 0x101). Pass an evade_mask without bit 0x1 (0x1e is every other technique)."
+  }
+ ]
+}

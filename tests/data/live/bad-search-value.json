@@ -1,0 +1,10 @@
+{
+ "case": "bad-search-value",
+ "tool": "hd_mem_search",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_mem_search: invalid value 'zz' (space-separated hex values)"
+  }
+ ]
+}

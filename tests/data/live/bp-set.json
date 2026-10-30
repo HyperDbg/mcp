@@ -1,0 +1,10 @@
+{
+ "case": "bp-set",
+ "tool": "hd_bp_set",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_bp_set: software breakpoints need Debugger Mode: in VMI mode use an EPT hook instead (hd_hook_ept2 on the code address, hd_hook_monitor on the data)"
+  }
+ ]
+}

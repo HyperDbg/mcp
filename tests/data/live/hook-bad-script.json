@@ -1,0 +1,10 @@
+{
+ "case": "hook-bad-script",
+ "tool": "hd_hook_ept",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_hook_ept: script error at line 1, column 15: Syntax Error: Unresolved Variable\n  printf(\"%x\", y);\n                ^\nhint: a name that is not a variable, symbol or function. A variable must be assigned earlier in the same script before it is read - a global too: `if (0) { .n = 0; }` declares .n without resetting it. Globals start with '.', registers with '@' (@rax), pseudo-registers with '$' ($pid)."
+  }
+ ]
+}

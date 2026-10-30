@@ -1,0 +1,10 @@
+{
+ "case": "script-check-ok",
+ "tool": "hd_script_check",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "The script parses. It is read-only."
+  }
+ ]
+}

@@ -10,13 +10,15 @@ from __future__ import annotations
 from functools import partial
 
 import anyio
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.types import InputRequiredResult
 
 from .errors import HyperDbgError
-from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, require_confirmation
+from .safety import wrap_untrusted
+from .toolkit import DESTRUCTIVE, RO, STATE, app_ctx, denial, require_confirmation
 
 
-def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
+def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
     # ----- SAFE reads (no target-controlled text -> no untrusted envelope) --- #
     @mcp.tool(name="hd_kernel_base", annotations=RO)
     def hd_kernel_base(ctx: Context) -> str:
@@ -50,12 +52,18 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
 
     # ----- navigation (execution control; allowed in read-only) ------------ #
     @mcp.tool(name="hd_step_out", annotations=STATE)
-    def hd_step_out(ctx: Context, last_instruction: bool = False) -> str:
-        """Run until the current function returns (gu / go-up)."""
+    def hd_step_out(ctx: Context, max_steps: int = 0) -> str:
+        """Step until the current function returns (gu / go-up).
+
+        Steps over calls; stops after the `ret`, or after max_steps steps
+        (0 = HyperDbg's default). If the thread never gets there (it blocks in
+        the kernel or the process exits), the wait has no end: hd_exec_pause may
+        interrupt it, otherwise the session has to be restarted.
+        """
         app = app_ctx(ctx)
-        app.session.step_out(last_instruction)
-        app.audit.record("hd_step_out", {}, status="ok")
-        return "Stepped out."
+        out = app.session.step_out(max_steps)
+        app.audit.record("hd_step_out", {"max_steps": max_steps}, status="ok")
+        return wrap_untrusted(out, "step") if out.strip() else "Stepped out."
 
     @mcp.tool(name="hd_step_track", annotations=STATE)
     def hd_step_track(ctx: Context) -> str:
@@ -71,66 +79,85 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
     # ----- GATED (consequential SDK ops; confirmed, not in read-only) ------ #
     async def _gated(ctx, *, what, audit, fn, ok):
         app = app_ctx(ctx)
-        if not await require_confirmation(ctx, what):
+        confirmed = await require_confirmation(ctx, what)
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record(audit, {}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         try:
             result = await anyio.to_thread.run_sync(fn)
-        except HyperDbgError as exc:
+        except HyperDbgError:
             app.audit.record(audit, {}, status="error")
-            return str(exc)
+            raise
         app.audit.record(audit, {}, status="ok")
         return ok(result) if callable(ok) else ok
 
     @mcp.tool(name="hd_vmm_load", annotations=DESTRUCTIVE)
-    async def hd_vmm_load(ctx: Context) -> str:
-        """Load the HyperDbg hypervisor (VMM). Ring-0; requires a DSE-off boot."""
+    async def hd_vmm_load(ctx: Context) -> str | InputRequiredResult:
+        """Load the HyperDbg hypervisor (VMM) and debug this machine (local VMI mode).
+
+        Ring-0; requires a DSE-off boot. Debugger Mode (serial/pipe/net) is for
+        a debugger on another machine and must not load the VMM here.
+        """
         return await _gated(
             ctx,
             what="load the HyperDbg VMM (hypervisor)",
             audit="hd_vmm_load",
             fn=app_ctx(ctx).session.load_vmm,
-            ok=lambda rc: f"load_vmm rc={rc}",
+            ok="VMM loaded (kd driver installed); connected in local VMI mode.",
         )
 
     @mcp.tool(name="hd_vmm_unload", annotations=DESTRUCTIVE)
-    async def hd_vmm_unload(ctx: Context) -> str:
+    async def hd_vmm_unload(ctx: Context) -> str | InputRequiredResult:
         """Unload the HyperDbg hypervisor (VMM)."""
         return await _gated(
             ctx,
             what="unload the HyperDbg VMM",
             audit="hd_vmm_unload",
             fn=app_ctx(ctx).session.unload_vmm,
-            ok=lambda rc: f"unload_vmm rc={rc}",
+            ok="VMM and kd module unloaded.",
         )
 
     @mcp.tool(name="hd_modules_load_all", annotations=DESTRUCTIVE)
-    async def hd_modules_load_all(ctx: Context) -> str:
-        """Load all HyperDbg kernel modules."""
+    async def hd_modules_load_all(ctx: Context) -> str | InputRequiredResult:
+        """Load all HyperDbg kernel modules.
+
+        Note that hd_modules_unload_all takes everything down, the VMM included:
+        run hd_vmm_load again (and hd_sym_reload) before the next session step.
+        """
         return await _gated(
             ctx,
             what="load all HyperDbg modules",
             audit="hd_modules_load_all",
             fn=app_ctx(ctx).session.load_all_modules,
-            ok=lambda rc: f"load_all_modules rc={rc}",
+            ok="All modules loaded (kd driver installed); connected in local VMI mode.",
         )
 
     @mcp.tool(name="hd_modules_unload_all", annotations=DESTRUCTIVE)
-    async def hd_modules_unload_all(ctx: Context) -> str:
+    async def hd_modules_unload_all(ctx: Context) -> str | InputRequiredResult:
         """Unload all HyperDbg kernel modules."""
         return await _gated(
             ctx,
             what="unload all HyperDbg modules",
             audit="hd_modules_unload_all",
             fn=app_ctx(ctx).session.unload_all_modules,
-            ok=lambda rc: f"unload_all_modules rc={rc}",
+            ok="All modules unloaded.",
         )
 
     @mcp.tool(name="hd_transparent_enable", annotations=DESTRUCTIVE)
     async def hd_transparent_enable(
-        ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1F
-    ) -> str:
-        """Enable transparent mode to hide the debugger (evade_mask ALL=0x1F)."""
+        ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1E
+    ) -> str | InputRequiredResult:
+        """Enable transparent mode: hide the debugger from one process.
+
+        Give exactly one of pid or name (case-sensitive image name, e.g.
+        "procexp.exe"); call again to hide from more processes. evade_mask
+        selects the techniques; the default 0x1e is every technique except the
+        syscall hook (0x1), which is left out and refused because it hangs the
+        machine in local VMI mode (it EPT-hooks the global syscall entry and a
+        core spins in the hypervisor, bugcheck 0x101).
+        """
         return await _gated(
             ctx,
             what="enable transparent (anti-detection) mode",
@@ -145,7 +172,7 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_transparent_disable", annotations=DESTRUCTIVE)
-    async def hd_transparent_disable(ctx: Context) -> str:
+    async def hd_transparent_disable(ctx: Context) -> str | InputRequiredResult:
         """Disable transparent mode (unhide the debugger)."""
         return await _gated(
             ctx,
@@ -156,8 +183,20 @@ def register_sdk(mcp: FastMCP, *, read_only: bool) -> None:
         )
 
     @mcp.tool(name="hd_process_start", annotations=DESTRUCTIVE)
-    async def hd_process_start(path: str, ctx: Context, args: str = "") -> str:
-        """Start a new process (optionally with args), breaking at its entry point."""
+    async def hd_process_start(
+        path: str, ctx: Context, args: str = ""
+    ) -> str | InputRequiredResult:
+        """Start a new process (optionally with args), breaking at its entry point.
+
+        HyperDbg's user debugger is beta: if the process is killed while still
+        stopped at the entry point, the int3 there can stay in the image's shared
+        page, and every later instance of that program crashes (0x80000003) until
+        the original byte is written back (hd_mem_edit, physical).
+
+        The entry pause sits in the process's start-up path: set breakpoints and
+        hd_exec_continue from there. Stepping from it executes that synthetic
+        state and the process faults in ntdll.
+        """
         return await _gated(
             ctx,
             what=f"start process {path}",

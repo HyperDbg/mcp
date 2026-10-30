@@ -1,0 +1,70 @@
+{
+ "case": "msr-echo-tsc-aux",
+ "tool": "hd_msr_write",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  },
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the system request)"
+  }
+ ]
+}

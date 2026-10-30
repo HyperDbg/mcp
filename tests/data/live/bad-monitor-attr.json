@@ -1,0 +1,10 @@
+{
+ "case": "bad-monitor-attr",
+ "tool": "hd_hook_monitor",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_hook_monitor: invalid attribute 'zzz' (use r | w | x | rw | rx | wx | rwx)"
+  }
+ ]
+}

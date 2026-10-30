@@ -1,0 +1,10 @@
+{
+ "case": "eval-sim-refused",
+ "tool": "hd_eval",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_eval: the expression reads poi(), @rsp, but in local VMI mode with no paused process HyperDbg only simulates the script engine: every register is 0 and target memory is not read, so the result would be meaningless. Pause a user-mode process first (hd_process_start or attach), or use hd_reg_read / hd_mem_read. Symbols and arithmetic work as they are."
+  }
+ ]
+}

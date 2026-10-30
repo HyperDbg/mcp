@@ -1,0 +1,10 @@
+{
+ "case": "bad-trace-type",
+ "tool": "hd_hook_trace",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_hook_trace: invalid trace_type 'zzz' (use step-in | step-out | instrument-step)"
+  }
+ ]
+}

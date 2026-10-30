@@ -1,0 +1,10 @@
+{
+ "case": "smi-count",
+ "tool": "hd_smi_count",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "smi_count=535"
+  }
+ ]
+}

@@ -1,0 +1,10 @@
+{
+ "case": "conn-cold",
+ "tool": "hd_connection_status",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "connected=False, mode=None, running=False"
+  }
+ ]
+}

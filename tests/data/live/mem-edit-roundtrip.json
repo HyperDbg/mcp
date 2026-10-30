@@ -1,0 +1,10 @@
+{
+ "case": "mem-edit-roundtrip",
+ "tool": "hd_mem_edit",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the memory request)"
+  }
+ ]
+}

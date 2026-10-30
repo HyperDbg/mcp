@@ -1,0 +1,10 @@
+{
+ "case": "kernel-base",
+ "tool": "hd_kernel_base",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "0xfffff80689200000"
+  }
+ ]
+}

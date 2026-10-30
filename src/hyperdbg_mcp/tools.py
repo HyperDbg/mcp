@@ -7,9 +7,9 @@
  * Structure (DESIGN §10, §11):
  *   - Read tools are annotated read-only and wrap all debuggee-sourced output
  *     in the untrusted-data envelope. They are plain (sync) functions so
- *     FastMCP runs them in its worker-thread pool, off the event loop.
- *   - Confirmation-gated tools are async (ctx.elicit is async). Their blocking
- *     ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
+ *     MCPServer runs them in its worker-thread pool, off the event loop.
+ *   - Confirmation-gated tools are async (require_confirmation is async). Their
+ *     blocking ctypes work is offloaded via anyio.to_thread.run_sync so the event loop
  *     is never frozen.
  *   - Any tool that can mutate the target (arbitrary command, breakpoints,
  *     memory/register/script writes) is registered ONLY when not --read-only.
@@ -18,24 +18,49 @@
 
 from __future__ import annotations
 
+import re
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 import anyio
-from mcp.server.fastmcp import Context
-from mcp.types import ToolAnnotations
+from mcp.server.mcpserver import Context
+from mcp.types import InputRequiredResult, ToolAnnotations
 from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
-from .toolkit import parse_addr
+from .script import COOKBOOK, TEMPLATE_KINDS, TemplateKind, build_template, read_only_script
+from .toolkit import (
+    choose,
+    denial,
+    parse_addr,
+    parsed_script,
+    pure_expression,
+    require_confirmation,
+    resolve_addr,
+)
 
 if TYPE_CHECKING:  # pragma: no cover
-    from mcp.server.fastmcp import FastMCP
+    from mcp.server.mcpserver import MCPServer
 
     from .server import AppContext
 
 _MAX_DISASM = 256
+_MAX_INSN_LEN = 15  # longest x86 instruction, in bytes
+# A disassembly line starts with its address: fffff802`79afd130 or 00401000.
+_INSN_LINE = re.compile(r"[0-9a-fA-F]{8}(?:`[0-9a-fA-F]{8})?\s")
+
+
+def _first_instructions(listing: str, count: int) -> str:
+    """Cut a `u` listing after `count` instruction lines (symbol labels kept)."""
+    lines, seen = [], 0
+    for line in listing.splitlines(keepends=True):
+        if _INSN_LINE.match(line):
+            if seen == count:
+                break
+            seen += 1
+        lines.append(line)
+    return "".join(lines)
 
 
 class RegisterDump(BaseModel):
@@ -48,41 +73,33 @@ class MemoryDump(BaseModel):
     hex: str = Field(description="Captured bytes, hex-encoded (untrusted-fenced)")
 
 
-class Confirm(BaseModel):
-    confirm: bool = Field(description="Proceed with this operation on the live target?")
-
-
 def _app(ctx: Context) -> AppContext:
     return ctx.request_context.lifespan_context
 
 
-async def _require_confirmation(ctx: Context, what: str) -> bool:
-    """Ask the client to confirm. Deny-by-default if elicitation is unavailable."""
-    try:
-        result = await ctx.elicit(
-            message=f"HyperDbg is a ring-0 debugger. Confirm: {what}", schema=Confirm
-        )
-    except Exception:
-        # Client doesn't advertise the elicitation capability, or it failed.
-        return False
-    return result.action == "accept" and bool(result.data and result.data.confirm)
-
-
-def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
+def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     """Register tools. Any target-mutating tool is skipped when read_only."""
 
     _RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
     _STATE = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
     _DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
+    # Never touches the target: same answer for the same input.
+    _OFFLINE = ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
 
     # ===== READ tools (safe; always registered) =========================== #
     @mcp.tool(name="hd_mem_read", annotations=_RO)
     def hd_mem_read(
         address: str, size: int, ctx: Context, pid: int = 0, virtual: bool = True
     ) -> MemoryDump:
-        """Read `size` bytes of debuggee memory from `address` (hex string, e.g. 0xfffff800...)."""
+        """Read `size` bytes of debuggee memory from `address`.
+
+        `address` is hex/decimal (0xfffff800...) or a symbol such as
+        `nt!KdDebuggerEnabled` or `nt!PsLoadedModuleList+0x8` (needs symbols).
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         data = app.session.read_memory(addr, size, pid=pid, virtual=virtual)
         app.audit.record(
             "hd_mem_read", {"address": hex(addr), "size": size}, status="ok", target_pid=pid
@@ -109,19 +126,119 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_eval", annotations=_RO)
     def hd_eval(expression: str, ctx: Context) -> str:
-        """Evaluate a HyperDbg script expression and return its integer value."""
+        """Evaluate a side-effect-free script expression (`poi(@rsp)+8`) to an integer.
+
+        Only reading functions are allowed (poi, db..dq, *_pa, strlen, ...); run
+        anything that writes with hd_script_run. Numbers are hex by default
+        (0n10 is decimal). In local VMI mode with no paused process HyperDbg only
+        simulates the engine: symbols and arithmetic work, and an expression
+        that reads @registers, $pseudo-registers or memory is refused (it would
+        read 0) - pause a process first, or use hd_reg_read / hd_mem_read.
+        """
         app = _app(ctx)
-        value = app.session.eval_expression(expression)
+        value = app.session.eval_expression(pure_expression(expression))
         app.audit.record("hd_eval", {"expression": expression}, status="ok")
         return hex(value)
 
-    @mcp.tool(name="hd_disasm", annotations=_RO)
-    def hd_disasm(address: str, ctx: Context, count: int = 16) -> str:
-        """Disassemble up to `count` instructions at `address` (hex string; read-only)."""
+    @mcp.tool(name="hd_script_eval", annotations=_RO)
+    def hd_script_eval(
+        script: Annotated[str, Field(description="HyperDbg script that only reads and prints")],
+        ctx: Context,
+    ) -> str:
+        """Run a read-only HyperDbg script and return what it prints.
+
+        For values hd_eval can't return: several at once, strings (%s, %ws),
+        loops over lists or arrays. Local variables, if/while/for, functions the
+        script defines, the reading functions and printf/print are allowed;
+        writes to registers, globals or memory and state-changing functions are
+        refused (use hd_script_run). Runs where hd_script_run runs: Debugger
+        Mode, or a paused user-mode process in local VMI mode. Syntax and
+        functions: hd_script_cookbook.
+
+        Example: for (i = 0; i < 4; i++) { printf("%llx\\n", dq(@rsp + i * 8)); }
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
+        out = app.session.run_script(read_only_script(script))
+        app.audit.record("hd_script_eval", {}, status="ok")
+        if not out.strip():
+            return "(the script printed nothing)"
+        return wrap_untrusted(out, "script-output")
+
+    @mcp.tool(name="hd_script_check", annotations=_OFFLINE)
+    def hd_script_check(
+        script: Annotated[str, Field(description="HyperDbg script to parse (not run)")],
+        ctx: Context,
+        read_only: Annotated[
+            bool, Field(description="also require it to pass hd_script_eval's read-only check")
+        ] = False,
+    ) -> str:
+        """Check a script's syntax with HyperDbg's own parser, without running it.
+
+        Use it on a hook's script= before setting the hook, or to fix a script
+        that failed. An error names the line and column, with a hint.
+        read_only=True also checks it would be accepted by hd_script_eval.
+        """
+        if read_only:
+            read_only_script(script)
+        parsed_script(ctx, script)
+        return "The script parses." + (" It is read-only." if read_only else "")
+
+    @mcp.tool(name="hd_script_cookbook", annotations=_OFFLINE)
+    def hd_script_cookbook() -> str:
+        """HyperDbg script syntax, functions, where scripts run, and recipes.
+
+        Read it before writing a script for hd_script_eval, hd_script_run or a
+        hook's script= (also the hyperdbg://script/cookbook resource).
+        """
+        return COOKBOOK
+
+    @mcp.tool(name="hd_script_template", annotations=_OFFLINE)
+    def hd_script_template(
+        kind: TemplateKind,
+        fields: Annotated[
+            str, Field(description='comma-separated expressions, e.g. "@rcx, s:@rdx, d:@r8"')
+        ] = "",
+        condition: Annotated[
+            str, Field(description='one expression, e.g. "$pid == 0x1234" (the *_if kinds)')
+        ] = "",
+        tag: Annotated[
+            str, Field(pattern=r"^[A-Za-z_]\w*$", description="a word that starts every line")
+        ] = "hit",
+        every: Annotated[int, Field(ge=1, description="count: print every Nth hit")] = 1,
+    ) -> str:
+        """Build an event script to pass as script= to a hook tool (runs nothing).
+
+        kinds:
+          log       print core, pid, tid, rip and `fields` on every hit
+          log_if    the same, only when `condition` holds
+          count     count hits in the global .<tag>_hits, print every `every`th
+          break_if  log, then pause into the debugger when `condition` holds
+                    (Debugger Mode)
+          block_if  log, then drop the event (event_sc) when `condition` holds:
+                    a pre-stage event with short_circuit
+        fields: comma-separated expressions printed as hex; prefix one with s:
+        (char* string), ws: (wchar_t* string) or d: (decimal), e.g.
+        "@rcx, s:@rdx, poi(@rsp+28)". condition: one expression, e.g.
+        "$pid == 0x1234 && @rcx != 0". tag: a word that starts every line.
+        """
+        script = build_template(kind, fields=fields, condition=condition, tag=tag, every=every)
+        kinds = ", ".join(TEMPLATE_KINDS)
+        return f"{script}\n\n(pass it as script= to a hook tool; kinds: {kinds})"
+
+    @mcp.tool(name="hd_disasm", annotations=_RO)
+    def hd_disasm(address: str, ctx: Context, count: int = 16, bits: int = 64) -> str:
+        """Disassemble up to `count` instructions at `address` (hex or symbol; read-only).
+
+        bits=32 decodes x86 (WoW64 / 32-bit) code instead of x64.
+        """
+        app = _app(ctx)
+        addr = resolve_addr(ctx, address)
         count = max(1, min(count, _MAX_DISASM))
-        out = app.session.run_command(f"u {hex(addr)} l {count:x}")
+        cmd = choose(str(bits), {"64": "u", "32": "u32"}, "bits")
+        # `l` is a length in bytes, not instructions: ask for the longest
+        # `count` instructions can be, then keep the first `count`.
+        out = app.session.run_command(f"{cmd} {hex(addr)} l {count * _MAX_INSN_LEN:x}")
+        out = _first_instructions(out, count)
         app.audit.record("hd_disasm", {"address": hex(addr), "count": count}, status="ok")
         return wrap_untrusted(out, "disassembly")
 
@@ -144,15 +261,21 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
     # ===== execution-control (no memory writes; allowed in read-only) ===== #
     @mcp.tool(name="hd_exec_continue", annotations=_STATE)
     def hd_exec_continue(ctx: Context) -> str:
-        """Continue (resume) the debuggee."""
+        """Resume the debuggee; returns at once while it keeps running.
+
+        Until it halts again (breakpoint, event, or hd_exec_pause) target tools
+        refuse with "debuggee is running"; hd_connection_status shows running=.
+        """
         app = _app(ctx)
-        app.session.continue_debuggee()
+        running = app.session.continue_debuggee()
         app.audit.record("hd_exec_continue", {}, status="ok")
+        if running:
+            return "Continued; the debuggee is running (halts on a breakpoint/event or pause)."
         return "Continued."
 
     @mcp.tool(name="hd_exec_pause", annotations=_STATE)
     def hd_exec_pause(ctx: Context) -> str:
-        """Pause (halt) the debuggee."""
+        """Halt a running debuggee and wait until it is halted (up to 10 s)."""
         app = _app(ctx)
         app.session.pause_debuggee()
         app.audit.record("hd_exec_pause", {}, status="ok")
@@ -171,12 +294,15 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
 
     # ===== target-mutating tools (NOT registered under --read-only) ======= #
     @mcp.tool(name="hd_exec_command", annotations=_DESTRUCTIVE)
-    async def hd_exec_command(command: str, ctx: Context) -> str:
+    async def hd_exec_command(command: str, ctx: Context) -> str | InputRequiredResult:
         """Run a raw HyperDbg CLI command (arbitrary; may modify the target)."""
         app = _app(ctx)
-        if not await _require_confirmation(ctx, f"run `{command}`"):
+        confirmed = await require_confirmation(ctx, f"run `{command}`")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_exec_command", {"command": command}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         try:
             out = await anyio.to_thread.run_sync(app.session.run_command, command)
         except HyperDbgError as exc:
@@ -189,20 +315,50 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
     def hd_bp_set(address: str, ctx: Context, pid: int = 0, tid: int = 0, core: int = 0) -> str:
         """Set a breakpoint at `address` (hex string; patches the target; full mode only)."""
         app = _app(ctx)
-        addr = parse_addr(address)
+        addr = resolve_addr(ctx, address)
         app.session.set_breakpoint(addr, pid=pid, tid=tid, core=core)
         app.audit.record("hd_bp_set", {"address": hex(addr)}, status="ok", target_pid=pid)
         return f"Breakpoint set at {hex(addr)}."
 
     @mcp.tool(name="hd_mem_write", annotations=_DESTRUCTIVE)
-    async def hd_mem_write(address: str, data_hex: str, ctx: Context, pid: int = 0) -> str:
-        """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string)."""
+    async def hd_mem_write(
+        address: str, data_hex: str, ctx: Context, pid: int = 0, expected_current: str = ""
+    ) -> str | InputRequiredResult:
+        """Write raw bytes (hex-encoded) to debuggee memory at `address` (hex string).
+
+        expected_current (hex, same length as data_hex) writes only if memory
+        still holds those bytes: a compare-and-write, so a patch computed from an
+        earlier read can't land on code or data that changed since.
+        """
         app = _app(ctx)
-        addr = parse_addr(address)
-        payload = bytes.fromhex(data_hex)
-        if not await _require_confirmation(ctx, f"write {len(payload)} bytes to {hex(addr)}"):
+        addr = resolve_addr(ctx, address)
+        try:
+            payload = bytes.fromhex(data_hex)
+            expected = bytes.fromhex(expected_current) if expected_current else None
+        except ValueError as exc:
+            raise HyperDbgError(f"invalid hex: {exc}") from None
+        if not payload:
+            raise HyperDbgError("data_hex is empty")
+        what = f"write {len(payload)} bytes to {hex(addr)}"
+        if expected is not None:
+            if len(expected) != len(payload):
+                raise HyperDbgError("expected_current must be as long as data_hex")
+            current = await anyio.to_thread.run_sync(
+                partial(app.session.read_memory, addr, len(payload), pid=pid)
+            )
+            if current != expected:
+                raise HyperDbgError(
+                    f"memory at {hex(addr)} no longer holds {expected.hex()} "
+                    f"(now {current.hex()}); nothing written"
+                )
+            if current == payload:
+                what += " (the bytes it already holds)"
+        confirmed = await require_confirmation(ctx, what)
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_mem_write", {"address": hex(addr)}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         await anyio.to_thread.run_sync(
             partial(app.session.write_memory_bytes, addr, payload, pid=pid)
         )
@@ -212,24 +368,37 @@ def register_tools(mcp: FastMCP, *, read_only: bool) -> None:
         return f"Wrote {len(payload)} bytes to {hex(addr)}."
 
     @mcp.tool(name="hd_reg_write", annotations=_DESTRUCTIVE)
-    async def hd_reg_write(name: str, value: str, ctx: Context) -> str:
+    async def hd_reg_write(name: str, value: str, ctx: Context) -> str | InputRequiredResult:
         """Write a value (hex string) to a single register."""
         app = _app(ctx)
         val = parse_addr(value)
-        if not await _require_confirmation(ctx, f"set {name} = {hex(val)}"):
+        confirmed = await require_confirmation(ctx, f"set {name} = {hex(val)}")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_reg_write", {"name": name}, status="denied")
-            return "Denied by user."
+            return denial(ctx)
         await anyio.to_thread.run_sync(app.session.write_register, name, val)
         app.audit.record("hd_reg_write", {"name": name}, status="ok")
         return f"Set {name} = {hex(val)}."
 
     @mcp.tool(name="hd_script_run", annotations=_DESTRUCTIVE)
-    async def hd_script_run(script: str, ctx: Context) -> str:
-        """Run a HyperDbg script (Turing-complete; can modify target state)."""
+    async def hd_script_run(script: str, ctx: Context) -> str | InputRequiredResult:
+        """Run a HyperDbg script (Turing-complete; can modify target state).
+
+        Returns what it prints. It is parsed first: a syntax error names the
+        line and column, with a hint. It runs in Debugger Mode, or in a paused
+        user-mode process in local VMI mode. For a script that only reads, use
+        hd_script_eval (no confirmation). Syntax, functions and recipes: the
+        hd_script_cookbook.
+        """
         app = _app(ctx)
-        if not await _require_confirmation(ctx, "run a HyperDbg script"):
+        confirmed = await require_confirmation(ctx, "run a HyperDbg script")
+        if isinstance(confirmed, InputRequiredResult):
+            return confirmed
+        if not confirmed:
             app.audit.record("hd_script_run", {}, status="denied")
-            return "Denied by user."
-        await anyio.to_thread.run_sync(app.session.run_script, script)
+            return denial(ctx)
+        out = await anyio.to_thread.run_sync(app.session.run_script, script)
         app.audit.record("hd_script_run", {}, status="ok")
-        return "Script executed."
+        return wrap_untrusted(out, "script-output") if out.strip() else "Script executed."

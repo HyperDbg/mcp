@@ -1,0 +1,10 @@
+{
+ "case": "script-check-hexname",
+ "tool": "hd_script_check",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_script_check: script error at line 1, column 12: Syntax Error: Invalid Syntax\n  int sq(int a) { return a; }\n             ^\nhint: 'a' reads as the hex number 0xa: numbers are hex by default, so a name made only of hex digits (a, b, add, cafe) is a number. Rename it."
+  }
+ ]
+}
