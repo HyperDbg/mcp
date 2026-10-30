@@ -277,6 +277,16 @@ def cases() -> list[Case]:
     # .start / .kill / .start: the second process stayed unknown to the debugger
     # and the third start hung for good (an unkillable process).
     umd("process-start-2", "hd_process_start", {"path": TEST_EXE}, "ok", "Started", budget=30)
+    # A step over a call from the entrypoint (mainCRTStartup: sub rsp / call
+    # __security_init_cookie / add rsp): its breakpoint was lost at VM-exit
+    # (DR7 = 400H), then, kept set, it broke again on the paused thread and the
+    # debuggee got a single-step exception (KiUserExceptionDispatcher).
+    umd("umd-continue-2", "hd_exec_continue", {}, "ok", "Continued", note="to the entrypoint breakpoint")
+    umd("umd-pause-2", "hd_exec_pause", {}, "ok", "Paused", note="already paused there: not an error")
+    umd("umd-step-to-call", "hd_exec_step", {"mode": "in"}, "ok", "Stepped", budget=15)
+    umd("umd-step-over-call", "hd_exec_step", {"mode": "over"}, "ok", "Stepped", budget=15)
+    umd("umd-step-over-call-rip", "hd_disasm", {"address": "@rip", "count": 1}, match=r"add rsp, 0x28", note="the instruction after the call")
+    umd("umd-step-after-call", "hd_exec_step", {"mode": "over"}, "ok", "Stepped", repeat=3, budget=15)
     umd("umd-reg-2", "hd_reg_read", {"name": "rip"}, match=r"^0x7ff[0-9a-f]+$")
     umd("umd-kill-2", "hd_process_kill", {}, "ok", budget=15)
     umd("process-start-3", "hd_process_start", {"path": TEST_EXE}, "ok", "Started", budget=30)

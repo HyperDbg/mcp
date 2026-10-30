@@ -1,0 +1,18 @@
+{
+ "case": "umd-step-after-call",
+ "tool": "hd_exec_step",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "Stepped (over)."
+  },
+  {
+   "is_error": false,
+   "text": "Stepped (over)."
+  },
+  {
+   "is_error": false,
+   "text": "Stepped (over)."
+  }
+ ]
+}

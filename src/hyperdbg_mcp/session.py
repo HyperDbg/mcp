@@ -408,7 +408,7 @@ class HyperDbgSession:
                     # the debuggee was still waiting; only a takeover says this.
                     self._reattached = "reattached to the debuggee" in self._peek()
                     return 1
-                self._drain()  # the failed takeover's messages are not this connect's
+                self._discard()  # the failed takeover's messages are not this connect's
                 after_failed_reattach()
             return handshake()
 
@@ -448,7 +448,7 @@ class HyperDbgSession:
             )
         self._prepare_remote()
         self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
-        self._drain()
+        self._discard()
         self._connect_failure = None
 
         def run() -> None:
@@ -591,7 +591,7 @@ class HyperDbgSession:
         with self._ops():
             # Before any connect too: the reason for a failure is only printed.
             self._dll.hyperdbg_u_set_text_message_callback(self._text_cb)
-            self._drain()
+            self._discard()
             for step in steps:
                 rc = int(step())
                 if rc != 0:
@@ -613,7 +613,7 @@ class HyperDbgSession:
                 return rc
             if _DRIVER_PENDING_DELETE not in self._peek():
                 return rc
-            self._drain()  # this attempt's failure is not the caller's to report
+            self._discard()  # this attempt's failure is not the caller's to report
             time.sleep(0.5)
 
     def load_vmm(self) -> None:
@@ -691,7 +691,7 @@ class HyperDbgSession:
         self._require_connected()
         name_b = name.encode("utf-8") if name else None
         with self._ops():
-            self._drain()
+            self._discard()
             ok = self._dll.hyperdbg_u_enable_transparent_mode_ex(
                 c_uint32(pid), name_b, c_ubyte(1 if pid else 0), c_uint32(evade_mask)
             )
@@ -702,7 +702,7 @@ class HyperDbgSession:
     def disable_transparent_mode(self) -> None:
         self._require_connected()
         with self._ops():
-            self._drain()
+            self._discard()
             ok = self._dll.hyperdbg_u_disable_transparent_mode()
             output = self._drain_settled() if not ok else ""
         if not ok:
@@ -718,7 +718,7 @@ class HyperDbgSession:
     def start_process(self, path: str, args: str = "") -> None:
         self._require_connected()
         with self._ops():
-            self._drain()
+            self._discard()
             if args:
                 ok = self._dll.hyperdbg_u_start_process_with_args(path, args)
             else:
@@ -824,6 +824,16 @@ class HyperDbgSession:
                 break
         return "".join(parts)
 
+    def _discard(self) -> None:
+        """Drop queued output that is not this command's, keeping it in the log.
+
+        It is mostly HyperDbg's messages from between commands (e.g. an error
+        the driver logged while the debuggee ran), which nothing else shows.
+        """
+        text = self._drain()
+        if text.strip():
+            _log.info("output between commands: %s", text[-4000:].rstrip())
+
     def _peek(self) -> str:
         """The output queued so far, left in place for whoever drains it."""
         text = self._drain()
@@ -879,7 +889,7 @@ class HyperDbgSession:
         """Run a HyperDbg CLI command and return its captured text output."""
         self._require_connected()
         with self._ops():
-            self._drain()  # discard anything stale before we start
+            self._discard()  # discard anything stale before we start
             _mark_interpreter_used()
             status = self._dll.hyperdbg_u_run_command(command.encode("utf-8"))
             output = self._drain_settled()
@@ -1086,7 +1096,7 @@ class HyperDbgSession:
         if fn is None:
             raise HyperDbgError(f"unknown step mode {mode!r} (use over|in|instr)")
         with self._ops():
-            self._drain()
+            self._discard()
             try:
                 fn()
             except HyperDbgError as exc:
@@ -1104,7 +1114,7 @@ class HyperDbgSession:
         self._require_connected()
         has_error = c_ubyte(0)
         with self._ops():
-            self._drain()
+            self._discard()
             value = self._dll.hyperdbg_u_eval_expression(expr.encode("utf-8"), byref(has_error))
             output = self._drain()
         if has_error.value:
@@ -1126,7 +1136,7 @@ class HyperDbgSession:
         """
         self._require_connected()
         with self._ops():
-            self._drain()
+            self._discard()
             try:
                 self._dll.hyperdbg_u_run_script(script.encode("utf-8"), c_ubyte(1))
             except HyperDbgError as exc:
