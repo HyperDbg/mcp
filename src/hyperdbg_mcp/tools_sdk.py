@@ -147,13 +147,16 @@ def register_sdk(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_transparent_enable", annotations=DESTRUCTIVE)
     async def hd_transparent_enable(
-        ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1F
+        ctx: Context, pid: int = 0, name: str = "", evade_mask: int = 0x1E
     ) -> str | InputRequiredResult:
         """Enable transparent mode: hide the debugger from one process.
 
         Give exactly one of pid or name (case-sensitive image name, e.g.
         "procexp.exe"); call again to hide from more processes. evade_mask
-        selects the techniques (ALL=0x1F).
+        selects the techniques; the default 0x1e is every technique except the
+        syscall hook (0x1), which is left out and refused because it hangs the
+        machine in local VMI mode (it EPT-hooks the global syscall entry and a
+        core spins in the hypervisor, bugcheck 0x101).
         """
         return await _gated(
             ctx,

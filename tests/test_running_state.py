@@ -349,6 +349,13 @@ def test_transparent_mode_needs_exactly_one_target(pid, name):
         HyperDbgSession(dll=ModuleDll()).enable_transparent_mode(pid=pid, name=name)
 
 
+def test_transparent_mode_refuses_the_syscall_hook():
+    # The syscall-hook technique (bit 0x1) hangs the machine in local VMI mode,
+    # so it is refused before the call; the other techniques are allowed.
+    with pytest.raises(HyperDbgError, match="syscall-hook"):
+        HyperDbgSession(dll=ModuleDll()).enable_transparent_mode(name="ping.exe", evade_mask=0x1F)
+
+
 def test_local_pause_does_not_wait_for_a_blocked_step():
     # A user-debugger step holds the session lock while it waits for the thread;
     # only a pause releases that wait, so the pause must not queue behind it.

@@ -155,7 +155,7 @@ class MockSession:
         return 0xFFFFF80000000000
 
     def enable_transparent_mode(
-        self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1F
+        self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1E
     ) -> None:
         return None
 

@@ -104,6 +104,14 @@ def _ensure_private_console() -> None:
 #: How long a tool waits for another command before it reports the session busy.
 _OPS_TIMEOUT_S = 60.0
 
+# Transparent-mode (!hide) evade techniques. The syscall hook puts an EPT hook
+# on the one global syscall entry (KiSystemCall64); in local VMI mode a core
+# then spins in the hypervisor on the next syscalls and the machine bugchecks
+# (0x101 CLOCK_WATCHDOG_TIMEOUT), so we leave it out of the default and refuse
+# it below. The other four techniques are stable.
+_TRANSPARENT_EVADE_SYSCALL_HOOK = 0x01
+_TRANSPARENT_EVADE_MASK_SAFE = 0x1E
+
 
 def _console_break() -> None:
     """Deliver CTRL+BREAK to this process only, so libhyperdbg's handler pauses the debuggee.
@@ -682,12 +690,19 @@ class HyperDbgSession:
             return int(self._dll.hyperdbg_u_get_kernel_base())
 
     def enable_transparent_mode(
-        self, *, pid: int = 0, name: str = "", evade_mask: int = 0x1F
+        self, *, pid: int = 0, name: str = "", evade_mask: int = _TRANSPARENT_EVADE_MASK_SAFE
     ) -> None:
         # libhyperdbg takes the name when the pid flag is off and strlen()s it:
         # no name there is a NULL dereference in this process.
         if bool(pid) == bool(name):
             raise HyperDbgError("give exactly one of pid or name (the process to hide from)")
+        if evade_mask & _TRANSPARENT_EVADE_SYSCALL_HOOK:
+            raise HyperDbgError(
+                "the syscall-hook technique (evade_mask bit 0x1) hangs the machine in "
+                "local VMI mode: it EPT-hooks the global syscall entry, and a core then "
+                "spins in the hypervisor on the next syscalls (bugcheck 0x101). Pass an "
+                "evade_mask without bit 0x1 (0x1e is every other technique)."
+            )
         self._require_connected()
         name_b = name.encode("utf-8") if name else None
         with self._ops():

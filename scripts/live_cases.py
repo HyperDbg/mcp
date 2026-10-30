@@ -197,7 +197,11 @@ def cases() -> list[Case]:
     add("events", "event-clear", "hd_event_clear", {"target": "all"}, "ok")
     add("events", "event-list-empty", "hd_event_list", {}, "ok", "no active/disabled events")
     add("events", "events-quiet", "@quiet", {"marker": "SYSCALL", "settle": 8, "window": 4}, budget=20, note="output arrives seconds late, so settle first")
-    add("events", "transparent-on", "hd_transparent_enable", {"name": "notepad.exe"}, "ok", "enabled")
+    # The syscall-hook technique (bit 0x1) EPT-hooks the global syscall entry
+    # and hangs a core in the hypervisor (0x101); it is refused, and the rest
+    # (0x1e) are stable.
+    add("events", "transparent-syscall-refused", "hd_transparent_enable", {"name": "notepad.exe", "evade_mask": 0x1F}, "error", "syscall-hook")
+    add("events", "transparent-on", "hd_transparent_enable", {"name": "notepad.exe", "evade_mask": 0x1E}, "ok", "enabled")
     add("events", "transparent-off", "hd_transparent_disable", {}, "ok", "disabled")
     add("events", "settings-set", "hd_settings", {"option": "syntax", "value": "intel"}, "ok")
     add("events", "flush", "hd_flush", {}, "ok")
