@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import re
 from functools import partial
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Annotated
 
 import anyio
 from mcp.server.mcpserver import Context
@@ -29,10 +29,12 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
+from .script import COOKBOOK, TEMPLATE_KINDS, TemplateKind, build_template, read_only_script
 from .toolkit import (
     choose,
     denial,
     parse_addr,
+    parsed_script,
     pure_expression,
     require_confirmation,
     resolve_addr,
@@ -81,6 +83,10 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
     _RO = ToolAnnotations(readOnlyHint=True, destructiveHint=False)
     _STATE = ToolAnnotations(readOnlyHint=False, destructiveHint=False)
     _DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True)
+    # Never touches the target: same answer for the same input.
+    _OFFLINE = ToolAnnotations(
+        readOnlyHint=True, destructiveHint=False, idempotentHint=True, openWorldHint=False
+    )
 
     # ===== READ tools (safe; always registered) =========================== #
     @mcp.tool(name="hd_mem_read", annotations=_RO)
@@ -123,14 +129,101 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
         """Evaluate a side-effect-free script expression (`poi(@rsp)+8`) to an integer.
 
         Only reading functions are allowed (poi, db..dq, *_pa, strlen, ...); run
-        anything that writes with hd_script_run. In local VMI mode HyperDbg only
-        simulates the engine (registers are 0, no memory access): symbols and
-        arithmetic work there, poi()/db() need Debugger Mode.
+        anything that writes with hd_script_run. Numbers are hex by default
+        (0n10 is decimal). In local VMI mode with no paused process HyperDbg only
+        simulates the engine: symbols and arithmetic work, and an expression
+        that reads @registers, $pseudo-registers or memory is refused (it would
+        read 0) - pause a process first, or use hd_reg_read / hd_mem_read.
         """
         app = _app(ctx)
         value = app.session.eval_expression(pure_expression(expression))
         app.audit.record("hd_eval", {"expression": expression}, status="ok")
         return hex(value)
+
+    @mcp.tool(name="hd_script_eval", annotations=_RO)
+    def hd_script_eval(
+        script: Annotated[str, Field(description="HyperDbg script that only reads and prints")],
+        ctx: Context,
+    ) -> str:
+        """Run a read-only HyperDbg script and return what it prints.
+
+        For values hd_eval can't return: several at once, strings (%s, %ws),
+        loops over lists or arrays. Local variables, if/while/for, functions the
+        script defines, the reading functions and printf/print are allowed;
+        writes to registers, globals or memory and state-changing functions are
+        refused (use hd_script_run). Runs where hd_script_run runs: Debugger
+        Mode, or a paused user-mode process in local VMI mode. Syntax and
+        functions: hd_script_cookbook.
+
+        Example: for (i = 0; i < 4; i++) { printf("%llx\\n", dq(@rsp + i * 8)); }
+        """
+        app = _app(ctx)
+        out = app.session.run_script(read_only_script(script))
+        app.audit.record("hd_script_eval", {}, status="ok")
+        if not out.strip():
+            return "(the script printed nothing)"
+        return wrap_untrusted(out, "script-output")
+
+    @mcp.tool(name="hd_script_check", annotations=_OFFLINE)
+    def hd_script_check(
+        script: Annotated[str, Field(description="HyperDbg script to parse (not run)")],
+        ctx: Context,
+        read_only: Annotated[
+            bool, Field(description="also require it to pass hd_script_eval's read-only check")
+        ] = False,
+    ) -> str:
+        """Check a script's syntax with HyperDbg's own parser, without running it.
+
+        Use it on a hook's script= before setting the hook, or to fix a script
+        that failed. An error names the line and column, with a hint.
+        read_only=True also checks it would be accepted by hd_script_eval.
+        """
+        if read_only:
+            read_only_script(script)
+        parsed_script(ctx, script)
+        return "The script parses." + (" It is read-only." if read_only else "")
+
+    @mcp.tool(name="hd_script_cookbook", annotations=_OFFLINE)
+    def hd_script_cookbook() -> str:
+        """HyperDbg script syntax, functions, where scripts run, and recipes.
+
+        Read it before writing a script for hd_script_eval, hd_script_run or a
+        hook's script= (also the hyperdbg://script/cookbook resource).
+        """
+        return COOKBOOK
+
+    @mcp.tool(name="hd_script_template", annotations=_OFFLINE)
+    def hd_script_template(
+        kind: TemplateKind,
+        fields: Annotated[
+            str, Field(description='comma-separated expressions, e.g. "@rcx, s:@rdx, d:@r8"')
+        ] = "",
+        condition: Annotated[
+            str, Field(description='one expression, e.g. "$pid == 0x1234" (the *_if kinds)')
+        ] = "",
+        tag: Annotated[
+            str, Field(pattern=r"^[A-Za-z_]\w*$", description="a word that starts every line")
+        ] = "hit",
+        every: Annotated[int, Field(ge=1, description="count: print every Nth hit")] = 1,
+    ) -> str:
+        """Build an event script to pass as script= to a hook tool (runs nothing).
+
+        kinds:
+          log       print core, pid, tid, rip and `fields` on every hit
+          log_if    the same, only when `condition` holds
+          count     count hits in the global .<tag>_hits, print every `every`th
+          break_if  log, then pause into the debugger when `condition` holds
+                    (Debugger Mode)
+          block_if  log, then drop the event (event_sc) when `condition` holds:
+                    a pre-stage event with short_circuit
+        fields: comma-separated expressions printed as hex; prefix one with s:
+        (char* string), ws: (wchar_t* string) or d: (decimal), e.g.
+        "@rcx, s:@rdx, poi(@rsp+28)". condition: one expression, e.g.
+        "$pid == 0x1234 && @rcx != 0". tag: a word that starts every line.
+        """
+        script = build_template(kind, fields=fields, condition=condition, tag=tag, every=every)
+        kinds = ", ".join(TEMPLATE_KINDS)
+        return f"{script}\n\n(pass it as script= to a hook tool; kinds: {kinds})"
 
     @mcp.tool(name="hd_disasm", annotations=_RO)
     def hd_disasm(address: str, ctx: Context, count: int = 16, bits: int = 64) -> str:
@@ -291,7 +384,14 @@ def register_tools(mcp: MCPServer, *, read_only: bool) -> None:
 
     @mcp.tool(name="hd_script_run", annotations=_DESTRUCTIVE)
     async def hd_script_run(script: str, ctx: Context) -> str | InputRequiredResult:
-        """Run a HyperDbg script (Turing-complete; can modify target state)."""
+        """Run a HyperDbg script (Turing-complete; can modify target state).
+
+        Returns what it prints. It is parsed first: a syntax error names the
+        line and column, with a hint. It runs in Debugger Mode, or in a paused
+        user-mode process in local VMI mode. For a script that only reads, use
+        hd_script_eval (no confirmation). Syntax, functions and recipes: the
+        hd_script_cookbook.
+        """
         app = _app(ctx)
         confirmed = await require_confirmation(ctx, "run a HyperDbg script")
         if isinstance(confirmed, InputRequiredResult):

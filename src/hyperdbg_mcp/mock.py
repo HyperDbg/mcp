@@ -114,6 +114,12 @@ class MockSession:
     def eval_expression(self, expr: str) -> int:
         return len(expr)
 
+    def check_script(self, script: str) -> str | None:
+        return None
+
+    def engine_context(self) -> str:
+        return "target"
+
     def set_breakpoint(self, address: int, *, pid: int = 0, tid: int = 0, core: int = 0) -> None:
         return None
 

@@ -37,11 +37,13 @@ from ctypes import (
     c_void_p,
     cast,
     create_string_buffer,
+    string_at,
 )
 
 from . import ffi
 from .errors import HyperDbgError, NotConnectedError, PreconditionError
 from .safety import wrap_untrusted
+from .script import format_parse_error, needs_target_context
 
 _log = logging.getLogger(__name__)
 
@@ -300,6 +302,7 @@ class HyperDbgSession:
         self.symbol_path: str = ""
         # Persistent reference - MUST outlive every callback invocation.
         self._text_cb = ffi.TextMessageCallback(self._on_text)
+        self._script_engine: CDLL | None | bool = False  # False = not looked up yet
 
     # ----- state ----------------------------------------------------------- #
     @property
@@ -1125,8 +1128,84 @@ class HyperDbgSession:
                     ) from None
                 raise
 
+    # ----- script engine ---------------------------------------------------- #
+    def check_script(self, script: str) -> str | None:
+        """Parse a script with HyperDbg's parser; its error message, or None.
+
+        Only parses (symbols are resolved, nothing runs), so it is safe for any
+        script and works with no debuggee at all. None also when the parser
+        library can't be found: the engine then reports errors itself.
+        """
+        if self._script_engine is False:
+            self._script_engine = ffi.load_script_engine()
+        lib = self._script_engine
+        if lib is None:
+            return None
+        with self._ops():
+            self._discard()
+            buf = lib.ScriptEngineParse(script.encode("utf-8"))
+            try:
+                if not buf:
+                    return None
+                msg = buf.contents.Message
+                return string_at(msg).decode("utf-8", "replace") if msg else None
+            finally:
+                if buf:
+                    lib.RemoveSymbolBuffer(buf)
+                self._discard()
+
+    def engine_context(self) -> str:
+        """Where a script would run: 'target', 'running' or 'simulated'.
+
+        Debugger Mode, or local VMI mode with a paused user-mode process, runs
+        scripts on the target ('target'). A local process that is not paused
+        refuses them ('running'). With no process at all HyperDbg only simulates
+        the engine with zeroed registers ('simulated'). libhyperdbg exports no
+        flag for this, so ask the engine with a script that cannot parse: it
+        checks the debuggee before parsing, and a parse error means it got that
+        far without running anything.
+        """
+        self._require_connected()
+        if self._mode != "local":
+            return "target"
+        with self._ops():
+            self._discard()
+            try:
+                self._dll.hyperdbg_u_run_script(b")", c_ubyte(1))
+            except HyperDbgError:
+                pass
+            said = self._drain_settled()
+        if "not connected to any debuggee" in said:
+            return "simulated"
+        if "NOT paused" in said:
+            return "running"
+        return "target"
+
+    def _require_target_context(self, script: str, what: str) -> None:
+        """Refuse a script that reads registers/memory where it would read zeros."""
+        if self._mode != "local":
+            return
+        reads = needs_target_context(script)
+        if not reads:
+            return
+        context = self.engine_context()
+        if context == "simulated":
+            raise HyperDbgError(
+                f"{what} reads {', '.join(reads)}, but in local VMI mode with no paused "
+                "process HyperDbg only simulates the script engine: every register is 0 "
+                "and target memory is not read, so the result would be meaningless. "
+                "Pause a user-mode process first (hd_process_start or attach), or use "
+                "hd_reg_read / hd_mem_read. Symbols and arithmetic work as they are."
+            )
+        if context == "running":
+            raise HyperDbgError(
+                f"{what} reads {', '.join(reads)} from the debugged process, which is "
+                "running: pause it first (hd_exec_pause)."
+            )
+
     def eval_expression(self, expr: str) -> int:
         self._require_connected()
+        self._require_target_context(expr, "the expression")
         has_error = c_ubyte(0)
         with self._ops():
             self._discard()
@@ -1146,10 +1225,14 @@ class HyperDbgSession:
     def run_script(self, script: str) -> str:
         """Run a script on the target; return what it printed.
 
-        Needs Debugger Mode or a paused user-mode process; HyperDbg says why
-        not (ShowErrorMessageIfAny), and that text goes into the error.
+        The parser checks it first (line/column/hint on a syntax error). It
+        needs Debugger Mode or a paused user-mode process; the error says which
+        is missing.
         """
         self._require_connected()
+        error = self.check_script(script)
+        if error:
+            raise HyperDbgError(format_parse_error(error, script))
         with self._ops():
             self._discard()
             try:
@@ -1157,7 +1240,22 @@ class HyperDbgSession:
             except HyperDbgError as exc:
                 output = self._drain_settled()
                 raise HyperDbgError(
-                    f"{exc}\n" + wrap_untrusted(output, "script-output"),
-                    status_code=exc.status_code,
+                    _script_failure(exc, output, script), status_code=exc.status_code
                 ) from None
             return self._drain_settled()
+
+
+def _script_failure(exc: HyperDbgError, output: str, script: str) -> str:
+    """A failed run_script, said in terms of what to do about it."""
+    if "not connected to any debuggee" in output:
+        return (
+            "scripts run in a debuggee: in local VMI mode that means a paused user-mode "
+            "process (hd_process_start, or attach and hd_exec_pause); otherwise connect "
+            "in Debugger Mode. For expressions on symbols use hd_eval; to run a script "
+            "on every hit of an event, pass it as script= to a hook tool."
+        )
+    if "NOT paused" in output:
+        return "the debugged process is running: pause it first (hd_exec_pause)."
+    if "Line " in output and "^" in output:
+        return format_parse_error(output, script)
+    return f"{exc}\n" + wrap_untrusted(output, "script-output")

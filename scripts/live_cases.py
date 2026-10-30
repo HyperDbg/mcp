@@ -61,6 +61,8 @@ import httpx2
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
+from hyperdbg_mcp.script import build_template
+
 SYM_PATH = r"srv*C:\Symbols*https://msdl.microsoft.com/download/symbols"
 QUERY_PC = "nt!NtQueryPerformanceCounter"
 QUERY_PC_BYTES = "48895c24"  # mov [rsp+...], rbx: the first bytes of QUERY_PC
@@ -142,6 +144,18 @@ def cases() -> list[Case]:
     read("mem-search", "hd_mem_search", {"address": QUERY_PC, "value": "48 89 5c 24", "fmt": "byte", "length": 64}, match=r"fffff[0-9a-f`]+")
     read("disasm-symbol", "hd_disasm", {"address": QUERY_PC, "count": 4}, "ok", "mov")
     read("eval", "hd_eval", {"expression": "1+2"}, match=r"^0x3$")
+    # Script engine with no debuggee: symbols evaluate, register/memory reads
+    # are refused (the simulated engine returns 0 for them), the parser is ours.
+    read("eval-symbol", "hd_eval", {"expression": QUERY_PC + "+3"}, match=r"^0xfffff[0-9a-f]{11}$")
+    read("eval-sim-refused", "hd_eval", {"expression": "poi(@rsp)"}, "error", "only simulates", note="read 0 silently before")
+    read("mem-read-reg-refused", "hd_mem_read", {"address": "@rip", "size": 4}, "error", "only simulates")
+    read("script-eval-no-debuggee", "hd_script_eval", {"script": 'printf("%x\\n", 1);'}, "error", "paused user-mode process")
+    read("script-check-ok", "hd_script_check", {"script": f'printf("%llx\\n", {QUERY_PC});', "read_only": True}, "ok", "It is read-only")
+    read("script-check-syntax", "hd_script_check", {"script": "x = 1;\ny = 2 + ;"}, "error", "line 2, column 9")
+    read("script-check-symbol", "hd_script_check", {"script": "x = nt!NoSuchThing;"}, "error", "is not a known symbol")
+    read("script-check-hexname", "hd_script_check", {"script": "int sq(int a) { return a; }"}, "error", "hex number 0xa")
+    read("script-template", "hd_script_template", {"kind": "count", "tag": "n"}, "ok", "if (0) { .n_hits = 0; }")
+    read("script-cookbook", "hd_script_cookbook", {}, "ok", "## Functions")
     read("pte", "hd_pte", {"virtual_address": QUERY_PC}, "ok", "PML4E")
     read("va2pa", "hd_va2pa", {"virtual_address": QUERY_PC}, match=r"(?m)^\s*[0-9a-f]{6,}\s*$")
     read("pa2va", "hd_pa2va", {"physical_address": "0x1000"}, match=r"(?m)^\s*fffff[0-9a-f]{11}\s*$")
@@ -176,6 +190,7 @@ def cases() -> list[Case]:
     add("events", "msrread-hook", "hd_hook_msrread", {"msr": 0xC0000082, "script": mk("MSRREAD")}, "ok")
     add("events", "msrwrite-hook", "hd_hook_msrwrite", {"msr": 0xC0000082, "script": mk("MSRWRITE")}, "ok")
     add("events", "syscall-hook", "hd_hook_syscall", {"script": mk("SYSCALL")}, "ok")
+    add("events", "hook-bad-script", "hd_hook_ept", {"address": QUERY_PC, "script": 'printf("%x", y);'}, "error", "Unresolved Variable", note="parsed before the hook is set")
     add("events", "sysret-hook", "hd_hook_sysret", {"script": mk("SYSRET")}, "ok")
     add("events", "tsc-hook", "hd_hook_tsc", {"script": mk("TSC")}, "ok", note="also makes TPAUSE/UMWAIT exit")
     add("events", "pmc-hook", "hd_hook_pmc", {"script": mk("PMC")}, "ok")
@@ -197,6 +212,11 @@ def cases() -> list[Case]:
     add("events", "event-clear", "hd_event_clear", {"target": "all"}, "ok")
     add("events", "event-list-empty", "hd_event_list", {}, "ok", "no active/disabled events")
     add("events", "events-quiet", "@quiet", {"marker": "SYSCALL", "settle": 8, "window": 4}, budget=20, note="output arrives seconds late, so settle first")
+    # Alone: next to the hooks above, whose markers print on every syscall, the
+    # message buffer overflows and a line printed every 0x100th call is dropped.
+    add("events", "syscall-count-hook", "hd_hook_syscall", {"script": build_template("count", tag="MK_SCOUNT", every=0x100)}, "ok", note="a global counter: needs the if (0) declaration to parse")
+    add("events", "syscall-count-fires", "@fired", {"markers": ["SCOUNT"], "within": 20}, budget=30)
+    add("events", "syscall-count-clear", "hd_event_clear", {"target": "all"}, "ok")
     # The syscall-hook technique (bit 0x1) EPT-hooks the global syscall entry
     # and hangs a core in the hypervisor (0x101); it is refused, and the rest
     # (0x1e) are stable.
@@ -209,7 +229,7 @@ def cases() -> list[Case]:
     add("events", "io-out", "hd_io_out", {"port": 128, "value": 0, "width": "al"}, "ok", note="port 0x80 is the POST port")
     add("events", "mem-dump", "hd_mem_dump", {"from_address": QUERY_PC, "to_address": QUERY_PC + "+0x10", "path": DUMP_FILE}, "ok")
     add("events", "exec-command", "hd_exec_command", {"command": ".status"}, "ok", "vmi mode")
-    add("events", "script-run", "hd_script_run", {"script": 'printf("hi\\n");'}, "error", "not connected to any debuggee", note="a script needs a halted context")
+    add("events", "script-run", "hd_script_run", {"script": 'printf("hi\\n");'}, "error", "paused user-mode process", note="a script needs a halted context")
     add("events", "core-switch", "hd_core_switch", {"core": 0}, "error", note="no cores to switch in VMI mode")
     add("events", "process-list", "hd_process_switch", {"list_only": True}, match=r"Process Id: 0004\s+DirBase.*Image: System")
     add("events", "thread-list", "hd_thread_switch", {"list_only": True}, match=r"THREAD\s+[0-9a-f]{16} \([0-9a-f]+\.[0-9a-f]+\)")
@@ -259,6 +279,11 @@ def cases() -> list[Case]:
     umd("umd-modules", "hd_list_modules", {}, "ok", "hdtest.exe", soak=True)
     umd("umd-regs", "hd_reg_read_all", {}, match=r'"rip": "0x7ff', soak=True)
     umd("umd-script", "hd_script_run", {"script": 'printf("%llx\\n", @rip);'}, match=r"7ff[0-9a-f]+", soak=True)
+    umd("umd-eval-reg", "hd_eval", {"expression": "@rip"}, match=r"^0x7ff[0-9a-f]+$", soak=True)
+    umd("umd-script-eval", "hd_script_eval", {"script": 'for (i = 0; i < 4; i++) { printf("[rsp+%x] = %llx\\n", i * 8, dq(@rsp + i * 8)); }'}, "ok", "[rsp+18] = ", soak=True)
+    umd("umd-script-eval-fn", "hd_script_eval", {"script": 'int sq(int x) { return x * x; } printf("%d\\n", sq(0n12));'}, match=r"(?m)^144$")
+    umd("umd-script-eval-write", "hd_script_eval", {"script": "@rax = 1;"}, "error", "writes a register")
+    umd("umd-script-syntax", "hd_script_run", {"script": 'printf("%d", q);'}, "error", "Unresolved Variable")
     # Register reads and scripts run in VMX root and complete the IOCTL from there:
     # this bugchecked (0x50, IopProcessBufferedIoCompletion) within a few dozen.
     umd("umd-reg-x60", "hd_reg_read", {"name": "rsp"}, match=r"^0x[0-9a-f]+$", repeat=60, budget=60)

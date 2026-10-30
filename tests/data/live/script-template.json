@@ -1,0 +1,10 @@
+{
+ "case": "script-template",
+ "tool": "hd_script_template",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "if (0) { .n_hits = 0; } .n_hits = .n_hits + 1; if (.n_hits % 0x1 == 0) { printf(\"n hits=%d\\n\", .n_hits); }\n\n(pass it as script= to a hook tool; kinds: log, log_if, count, break_if, block_if)"
+  }
+ ]
+}

@@ -96,13 +96,14 @@ with nothing paused.)
 ## Tools
 
 **Read (always available):** `hd_mem_read`, `hd_reg_read_all`, `hd_reg_read`, `hd_eval`,
+`hd_script_eval`, `hd_script_check`, `hd_script_template`, `hd_script_cookbook`,
 `hd_disasm`, `hd_list_modules`, `hd_status`.
 **Execution control (available in `--read-only`):** `hd_exec_continue`, `hd_exec_pause`,
 `hd_exec_step`.
 **Target-mutating (full mode only, confirmation-gated):** `hd_exec_command`, `hd_bp_set`,
 `hd_mem_write`, `hd_reg_write`, `hd_script_run`.
 
-The domain modules (`tools_<domain>.py`) bring it to 92 tools (43 under `--read-only`): memory (incl. `dps/dqs` symbolized
+The domain modules (`tools_<domain>.py`) bring it to 114 tools (54 under `--read-only`): memory (incl. `dps/dqs` symbolized
 dumps, `.pagein`), symbols, paging, cores (`~`), process/thread switching and user-mode
 `.attach/.detach/.kill/.restart`, every event type (`!epthook` ... `!mode`, `!trace`,
 `!crwrite`, `!xsetbv`) with `pid/core/stage/sc/script` options, `prealloc/preactivate`,
@@ -114,6 +115,30 @@ Address arguments take hex/decimal or a symbol with optional offsets
 (`nt!KdDebuggerEnabled`, `nt!PsLoadedModuleList+0x8`, `@rip-10`), resolved through
 HyperDbg's symbols (load them with `hd_sym_path` + `hd_sym_reload`). Nothing else is
 passed to the script engine, so read-only tools stay read-only.
+
+### Scripting
+
+HyperDbg's script engine is reachable four ways: `hd_eval` (one read-only expression →
+integer), `hd_script_eval` (a read-only script → what it prints; no confirmation),
+`hd_script_run` (any script, confirmed), and `script=` on every hook tool (runs on each hit).
+
+- **Parsed before it runs.** Every script goes through HyperDbg's own parser
+  (`ScriptEngineParse` in `script-engine.dll`, which runs nothing) first, so a typo comes
+  back as `script error at line 2, column 9: ... ` with the line, a caret and a hint
+  (unknown symbol, a name made only of hex digits, a global read before it is assigned),
+  instead of a hook that is half set up. `hd_script_check` does only that.
+- **Read-only means read-only.** `hd_script_eval` accepts locals, `if/while/for`, the
+  script's own functions, the reading functions and `printf`; it refuses writes to
+  registers, globals, memory (through pointers too), state-changing functions and
+  `#include`.
+- **No silent zeros.** In local VMI mode with no paused process HyperDbg only simulates the
+  engine (every register 0, no target memory). An expression that reads `@registers`,
+  `$pseudo-registers` or memory is refused there with what to do instead, rather than
+  answering 0; symbols and arithmetic still work.
+- **Templates and a cookbook.** `hd_script_template` builds common hook scripts (log
+  arguments, count hits, log / break / drop on a condition) that parse as they are;
+  `hd_script_cookbook` (also the `hyperdbg://script/cookbook` resource) is the syntax,
+  function list and recipes, including the parser's two traps.
 
 Confirmation uses MCP elicitation. At protocol 2026-07-28 it rides `InputRequiredResult`
 (the client retries the call with the answer); older revisions use `elicitation/create`.

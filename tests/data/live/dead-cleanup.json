@@ -1,0 +1,10 @@
+{
+ "case": "dead-cleanup",
+ "tool": "hd_process_kill",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the process request)"
+  }
+ ]
+}

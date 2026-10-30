@@ -20,6 +20,7 @@ from dataclasses import dataclass
 from mcp.server.mcpserver import MCPServer
 
 from .safety import AuditLog
+from .script import COOKBOOK
 from .session import HyperDbgSession
 from .tools import register_tools
 from .tools_connection import register_connection
@@ -106,6 +107,17 @@ def build_server(
     register_tools(mcp, read_only=read_only)
     for register in _TOOL_MODULES:
         register(mcp, read_only=read_only)
+
+    @mcp.resource(
+        "hyperdbg://script/cookbook",
+        name="script-cookbook",
+        title="HyperDbg script cookbook",
+        description="Script syntax, functions, where scripts run, and recipes.",
+        mime_type="text/markdown",
+    )
+    def script_cookbook() -> str:
+        return COOKBOOK
+
     return mcp
 
 

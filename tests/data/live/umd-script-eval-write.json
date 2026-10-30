@@ -1,0 +1,10 @@
+{
+ "case": "umd-script-eval-write",
+ "tool": "hd_script_eval",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_script_eval: assigning to @rax writes a register (not allowed in a read-only script; use hd_script_run)"
+  }
+ ]
+}

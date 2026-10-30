@@ -1,0 +1,10 @@
+{
+ "case": "umd-detach",
+ "tool": "hd_process_detach",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "done (HyperDbg printed nothing for the process request)"
+  }
+ ]
+}

@@ -35,6 +35,7 @@ from pydantic import BaseModel, Field
 
 from .errors import HyperDbgError
 from .safety import wrap_untrusted
+from .script import PURE_FUNCTIONS, format_parse_error
 
 if TYPE_CHECKING:  # pragma: no cover
     from .server import AppContext
@@ -122,15 +123,6 @@ def hex_values(value: str, name: str = "value") -> str:
     return value.strip()
 
 
-# Script-engine functions with no side effects (script-engine/python/Grammar.txt).
-# Everything else (eb/ed/eq, memcpy, interlocked_*, event_*, pause, spinlock_*...)
-# writes memory or changes debugger state.
-_PURE_FUNCTIONS = frozenset(
-    """poi db dd dw dq neg hi low not check_address disassemble_len disassemble_len32
-    disassemble_len64 reference physical_to_virtual virtual_to_physical poi_pa hi_pa
-    low_pa db_pa dd_pa dw_pa dq_pa strlen wcslen strcmp wcscmp memcmp strncmp wcsncmp
-    rdtsc rdtscp""".split()
-)
 _STRING_LITERAL = re.compile(r'"[^"\\\r\n]*"')
 _CALL = re.compile(r"([A-Za-z_]\w*)\s*\(")
 _ASSIGNMENT = re.compile(r"(?<![=!<>])=(?!=)|\+\+|--")
@@ -149,7 +141,7 @@ def pure_expression(expr: str) -> str:
     if _ASSIGNMENT.search(code):
         raise HyperDbgError(f"invalid expression {expr!r} (assignments are not allowed)")
     for name in _CALL.findall(code):
-        if name not in _PURE_FUNCTIONS:
+        if name not in PURE_FUNCTIONS:
             raise HyperDbgError(
                 f"function {name}() is not allowed in a read-only expression "
                 "(use hd_script_run for scripts with side effects)"
@@ -219,6 +211,20 @@ def bracket_body(text: str, name: str = "script") -> str:
     if in_quotes or depth:
         raise HyperDbgError(f"{name}: unbalanced braces or unterminated string")
     return text
+
+
+def parsed_script(ctx: Context, script: str) -> str:
+    """Run HyperDbg's own parser over a script before it goes anywhere.
+
+    A syntax error then comes back with its line, column and a hint, instead of
+    a hook command that half-applies or a bare "script failed". Sessions with no
+    parser (test fakes) skip the check.
+    """
+    check = getattr(app_ctx(ctx).session, "check_script", None)
+    error = check(script) if check else None
+    if error:
+        raise HyperDbgError(format_parse_error(error, script))
+    return script
 
 
 _CONFIRM_KEY = "confirm"

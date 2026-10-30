@@ -18,6 +18,7 @@ _MUTATING = {"hd_exec_command", "hd_bp_set", "hd_mem_write", "hd_reg_write", "hd
 _READ_ONLY_SAFE = {
     "hd_mem_read", "hd_reg_read_all", "hd_reg_read", "hd_eval", "hd_disasm",
     "hd_list_modules", "hd_status", "hd_exec_continue", "hd_exec_pause", "hd_exec_step",
+    "hd_script_eval", "hd_script_check", "hd_script_template", "hd_script_cookbook",
 }
 
 

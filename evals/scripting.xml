@@ -1,0 +1,49 @@
+<!--
+  Scripting evaluation for hyperdbg-mcp (mcp-builder evaluation format).
+  Precondition: local VMI mode with the VMM loaded and kernel symbols reloaded
+  (hd_vmm_load, hd_sym_path, hd_sym_reload), and no user-mode process paused.
+  Every question is answerable with read-only tools; answers were checked on
+  the test rig (Windows 11, HyperDbg dev).
+-->
+<evaluation>
+   <qa_pair>
+      <question>HyperDbg's script engine reads bare numbers in one base and 0n-prefixed numbers in another. Evaluate the expression 10 + 0n10 with the debugger. What value does it return, written exactly as the tool prints it?</question>
+      <answer>0x1a</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>A colleague's event script starts with int sq(int a) { return a * a; } and HyperDbg rejects it. Check that function with the debugger's own script parser. At which 1-based column does the reported error point?</question>
+      <answer>12</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Build the debugger's standard hit-counting event script with the tag ntc that prints only every 4096th hit. Which hex literal does the generated script use as the modulus?</question>
+      <answer>0x1000</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>The one-line event script .n = .n + 1; is rejected when you try to attach it to a hook. Check it with the debugger's parser. What error cause does the parser report, after the words "Syntax Error: "?</question>
+      <answer>Unresolved Variable</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Using the kernel's symbols, find the byte offset of the Blink field inside nt!_LIST_ENTRY. Give it in hex without leading zeros (for example 0x10).</question>
+      <answer>0x8</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>According to the debugger's script documentation, which printf format specifier prints a wide-character (wchar_t*) string?</question>
+      <answer>%ws</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Generate the debugger's event script that drops an event whenever $pid == 4. Which script-engine function does that script call to drop the event?</question>
+      <answer>event_sc</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>With no user-mode process paused, ask the debugger to evaluate poi(@rsp) + $pid. It refuses and lists what the expression would read from the target. How many distinct items does that list contain?</question>
+      <answer>3</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Resolve both nt!NtQueryPerformanceCounter and nt!NtQueryPerformanceCounter+0n16 with the debugger. What is the difference between the two addresses, in hex as the debugger writes numbers (for example 0x8)?</question>
+      <answer>0x10</answer>
+   </qa_pair>
+   <qa_pair>
+      <question>Check whether the script x = 1; @rax = x; would be accepted as a read-only script. The debugger refuses it: which register does it say the script would write?</question>
+      <answer>@rax</answer>
+   </qa_pair>
+</evaluation>

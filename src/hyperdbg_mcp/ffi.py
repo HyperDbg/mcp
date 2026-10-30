@@ -470,3 +470,35 @@ def _use_driver_next_to_dll(dll: CDLL) -> None:
         dll.hyperdbg_u_set_custom_driver_path.restype = c_ubyte
         dll.hyperdbg_u_set_custom_driver_path.argtypes = [c_char_p, c_char_p]
         dll.hyperdbg_u_set_custom_driver_path(driver.encode("mbcs"), b"hyperkd")
+
+
+SCRIPT_ENGINE_LIB_NAME = "script-engine.dll" if sys.platform == "win32" else "libscript-engine.so"
+
+
+class SYMBOL_BUFFER(Structure):
+    """script-engine's parse result (ScriptEngineCommonDefinitions.h)."""
+
+    _fields_ = [
+        ("Head", c_void_p),
+        ("Pointer", c_uint32),
+        ("Size", c_uint32),
+        ("Message", c_void_p),  # char *: NULL when the script parsed
+    ]
+
+
+def load_script_engine() -> CDLL | None:
+    """The script-engine library libhyperdbg already loaded, for its parser.
+
+    ScriptEngineParse only parses (and resolves symbols); it runs nothing, so
+    the server can check a script's syntax before it reaches the target. None
+    if the library can't be found: the check is then skipped.
+    """
+    try:
+        lib = CDLL(SCRIPT_ENGINE_LIB_NAME)
+    except OSError:
+        return None
+    lib.ScriptEngineParse.restype = POINTER(SYMBOL_BUFFER)
+    lib.ScriptEngineParse.argtypes = [c_char_p]
+    lib.RemoveSymbolBuffer.restype = None
+    lib.RemoveSymbolBuffer.argtypes = [POINTER(SYMBOL_BUFFER)]
+    return lib

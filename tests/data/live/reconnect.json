@@ -1,0 +1,10 @@
+{
+ "case": "reconnect",
+ "tool": "hd_reconnect",
+ "answers": [
+  {
+   "is_error": false,
+   "text": "no previous connection to repeat; use hd_connect first"
+  }
+ ]
+}

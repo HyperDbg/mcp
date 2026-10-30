@@ -1,0 +1,10 @@
+{
+ "case": "umd-step-track",
+ "tool": "hd_step_track",
+ "answers": [
+  {
+   "is_error": true,
+   "text": "Error executing tool hd_step_track: hyperdbg_u_stepping_instrumentation_step_in_for_tracking returned FALSE. In local VMI mode this usually means execution isn't paused - there is no halted CPU context to read/modify. Pause the debuggee at an event/breakpoint (or use Debugger Mode) first."
+  }
+ ]
+}

@@ -19,6 +19,7 @@ from .toolkit import (
     choose,
     output_names,
     parse_addr,
+    parsed_script,
     resolve_addr,
     run_text,
     run_text_confirmed,
@@ -44,6 +45,7 @@ _PREALLOC_TYPES = {
 
 
 def _suffix(
+    ctx: Context,
     pid: int,
     core: int,
     script: str,
@@ -52,7 +54,11 @@ def _suffix(
     *,
     output: str = "",
 ) -> str:
-    """Build the event-option suffix (pid/core/stage/sc/output/script) for a hook command."""
+    """Build the event-option suffix (pid/core/stage/sc/output/script) for a hook command.
+
+    The script is parsed by HyperDbg's parser first: a typo then fails here with
+    its line and column, not after the confirmation, half-way into the command.
+    """
     parts = []
     if pid:
         parts.append(f" pid {pid:#x}")
@@ -65,15 +71,39 @@ def _suffix(
     if output:
         parts.append(f" output {{{output_names(output)}}}")
     if script:
-        parts.append(f" script {{ {bracket_body(script)} }}")
+        parts.append(f" script {{ {parsed_script(ctx, bracket_body(script))} }}")
     return "".join(parts)
+
+
+_SCRIPT_DOC = """
+
+script= runs a HyperDbg script on every hit, on the target (any mode). It is
+parsed before anything is set. hd_script_template builds common ones (log
+arguments, count hits, log/break/drop on a condition); hd_script_cookbook
+lists the syntax and functions. No // or /* */ comments and no backslash
+outside a string literal inside it.
+"""
+
+
+def _hook_tool(mcp: MCPServer):
+    """mcp.tool, with the script= note appended to every hook's description."""
+
+    def tool(**kwargs):
+        def decorator(fn):
+            fn.__doc__ = (fn.__doc__ or "").rstrip() + _SCRIPT_DOC
+            return mcp.tool(**kwargs)(fn)
+
+        return decorator
+
+    return tool
 
 
 def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
     if read_only:
         return
+    hook_tool = _hook_tool(mcp)
 
-    @mcp.tool(name="hd_hook_ept", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_ept", annotations=DESTRUCTIVE)
     async def hd_hook_ept(
         address: str,
         ctx: Context,
@@ -87,7 +117,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         """Set EPT (Extended Page Tables) hook at address (hex string)."""
         addr = resolve_addr(ctx, address)
         cmd = f"!epthook {addr:#x}" + _suffix(
-            pid, core, script, stage, short_circuit, output=output
+            ctx, pid, core, script, stage, short_circuit, output=output
         )
         return await run_text_confirmed(
             ctx,
@@ -98,7 +128,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"address": addr},
         )
 
-    @mcp.tool(name="hd_hook_ept2", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_ept2", annotations=DESTRUCTIVE)
     async def hd_hook_ept2(
         address: str,
         ctx: Context,
@@ -112,7 +142,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         """Set EPT2 (Extended Page Tables 2) hook at address (hex string)."""
         addr = resolve_addr(ctx, address)
         cmd = f"!epthook2 {addr:#x}" + _suffix(
-            pid, core, script, stage, short_circuit, output=output
+            ctx, pid, core, script, stage, short_circuit, output=output
         )
         return await run_text_confirmed(
             ctx,
@@ -123,7 +153,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"address": addr},
         )
 
-    @mcp.tool(name="hd_hook_monitor", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_monitor", annotations=DESTRUCTIVE)
     async def hd_hook_monitor(
         attribute: str,
         from_address: str,
@@ -141,7 +171,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         to = resolve_addr(ctx, to_address)
         attr = choose(attribute, _MONITOR_ATTRS, "attribute")
         cmd = f"!monitor {attr} {frm:#x} {to:#x}" + _suffix(
-            pid, core, script, stage, short_circuit, output=output
+            ctx, pid, core, script, stage, short_circuit, output=output
         )
         return await run_text_confirmed(
             ctx,
@@ -152,7 +182,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"attribute": attribute, "from_address": frm, "to_address": to},
         )
 
-    @mcp.tool(name="hd_hook_syscall", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_syscall", annotations=DESTRUCTIVE)
     async def hd_hook_syscall(
         ctx: Context,
         syscall_number: int = -1,
@@ -167,7 +197,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!syscall"
         if syscall_number >= 0:
             cmd += f" {syscall_number:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -177,7 +207,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_sysret", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_sysret", annotations=DESTRUCTIVE)
     async def hd_hook_sysret(
         ctx: Context,
         pid: int = 0,
@@ -188,7 +218,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook sysret (return from syscall) instruction."""
-        cmd = "!sysret" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = "!sysret" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -198,7 +228,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_cpuid", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_cpuid", annotations=DESTRUCTIVE)
     async def hd_hook_cpuid(
         ctx: Context,
         eax: int = -1,
@@ -213,7 +243,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!cpuid"
         if eax >= 0:
             cmd += f" {eax:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -223,7 +253,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_msrread", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_msrread", annotations=DESTRUCTIVE)
     async def hd_hook_msrread(
         ctx: Context,
         msr: int = -1,
@@ -238,7 +268,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!msrread"
         if msr >= 0:
             cmd += f" {msr:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -248,7 +278,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_msrwrite", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_msrwrite", annotations=DESTRUCTIVE)
     async def hd_hook_msrwrite(
         ctx: Context,
         msr: int = -1,
@@ -263,7 +293,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!msrwrite"
         if msr >= 0:
             cmd += f" {msr:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -273,7 +303,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_tsc", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_tsc", annotations=DESTRUCTIVE)
     async def hd_hook_tsc(
         ctx: Context,
         pid: int = 0,
@@ -284,12 +314,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook TSC (Time Stamp Counter) instruction."""
-        cmd = "!tsc" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = "!tsc" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set tsc hook: {cmd}", audit="hd_hook_tsc", kind="events", args={}
         )
 
-    @mcp.tool(name="hd_hook_pmc", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_pmc", annotations=DESTRUCTIVE)
     async def hd_hook_pmc(
         ctx: Context,
         pid: int = 0,
@@ -300,12 +330,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook PMC (Performance Monitoring Counters)."""
-        cmd = "!pmc" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = "!pmc" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set pmc hook: {cmd}", audit="hd_hook_pmc", kind="events", args={}
         )
 
-    @mcp.tool(name="hd_hook_ioin", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_ioin", annotations=DESTRUCTIVE)
     async def hd_hook_ioin(
         ctx: Context,
         port: int = -1,
@@ -320,7 +350,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!ioin"
         if port >= 0:
             cmd += f" {port:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -330,7 +360,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_ioout", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_ioout", annotations=DESTRUCTIVE)
     async def hd_hook_ioout(
         ctx: Context,
         port: int = -1,
@@ -345,7 +375,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!ioout"
         if port >= 0:
             cmd += f" {port:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -355,7 +385,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_vmcall", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_vmcall", annotations=DESTRUCTIVE)
     async def hd_hook_vmcall(
         ctx: Context,
         pid: int = 0,
@@ -366,7 +396,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook VMCALL (hypervisor call) instruction."""
-        cmd = "!vmcall" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = "!vmcall" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -376,7 +406,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_exception", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_exception", annotations=DESTRUCTIVE)
     async def hd_hook_exception(
         ctx: Context,
         idt_index: int = -1,
@@ -391,7 +421,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         cmd = "!exception"
         if idt_index >= 0:
             cmd += f" {idt_index:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -401,7 +431,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={},
         )
 
-    @mcp.tool(name="hd_hook_interrupt", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_interrupt", annotations=DESTRUCTIVE)
     async def hd_hook_interrupt(
         idt_index: int,
         ctx: Context,
@@ -414,7 +444,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str | InputRequiredResult:
         """Hook specific interrupt by IDT index."""
         cmd = f"!interrupt {idt_index:#x}" + _suffix(
-            pid, core, script, stage, short_circuit, output=output
+            ctx, pid, core, script, stage, short_circuit, output=output
         )
         return await run_text_confirmed(
             ctx,
@@ -425,7 +455,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"idt_index": idt_index},
         )
 
-    @mcp.tool(name="hd_hook_dr", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_dr", annotations=DESTRUCTIVE)
     async def hd_hook_dr(
         ctx: Context,
         pid: int = 0,
@@ -436,12 +466,12 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         short_circuit: bool = False,
     ) -> str | InputRequiredResult:
         """Hook debug register access."""
-        cmd = "!dr" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = "!dr" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx, cmd, what=f"set dr hook: {cmd}", audit="hd_hook_dr", kind="events", args={}
         )
 
-    @mcp.tool(name="hd_hook_mode", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_mode", annotations=DESTRUCTIVE)
     async def hd_hook_mode(
         mode: str,
         pid: int,
@@ -457,7 +487,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         Run hd_preactivate first (mode-based execution traps must be preactivated).
         """
         m = choose(mode, _MODES, "mode")
-        cmd = f"!mode {m}" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = f"!mode {m}" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -467,7 +497,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"mode": mode, "pid": pid},
         )
 
-    @mcp.tool(name="hd_hook_trace", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_trace", annotations=DESTRUCTIVE)
     async def hd_hook_trace(
         trace_type: str,
         ctx: Context,
@@ -480,7 +510,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str | InputRequiredResult:
         """Trace execution as an event (trace_type: step-in|step-out|instrument-step)."""
         t = choose(trace_type, _TRACE_TYPES, "trace_type")
-        cmd = f"!trace {t}" + _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd = f"!trace {t}" + _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -490,7 +520,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"trace_type": t},
         )
 
-    @mcp.tool(name="hd_hook_crwrite", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_crwrite", annotations=DESTRUCTIVE)
     async def hd_hook_crwrite(
         cr: int,
         ctx: Context,
@@ -509,7 +539,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
         m = parse_addr(mask)
         if m:
             cmd += f" mask {m:#x}"
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
@@ -519,7 +549,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
             args={"cr": cr, "mask": m},
         )
 
-    @mcp.tool(name="hd_hook_xsetbv", annotations=DESTRUCTIVE)
+    @hook_tool(name="hd_hook_xsetbv", annotations=DESTRUCTIVE)
     async def hd_hook_xsetbv(
         ctx: Context,
         xcr: int = -1,
@@ -532,7 +562,7 @@ def register_hooks(mcp: MCPServer, *, read_only: bool) -> None:
     ) -> str | InputRequiredResult:
         """Hook all XSETBV instructions or a specific XCR if xcr >= 0."""
         cmd = "!xsetbv" + (f" {xcr:#x}" if xcr >= 0 else "")
-        cmd += _suffix(pid, core, script, stage, short_circuit, output=output)
+        cmd += _suffix(ctx, pid, core, script, stage, short_circuit, output=output)
         return await run_text_confirmed(
             ctx,
             cmd,
